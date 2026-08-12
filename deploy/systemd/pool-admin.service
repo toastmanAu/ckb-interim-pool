@@ -1,0 +1,25 @@
+[Unit]
+Description=CKB Interim Pool — operator console (localhost only, token auth)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pool
+Group=pool
+WorkingDirectory=/opt/wyltek-pool
+Environment=POOL_DB_URL=postgres://pool:CHANGEME@127.0.0.1:5432/pooltest
+Environment=POOL_ADMIN_PORT=8085
+# generate with: openssl rand -hex 32  (keep in the operator secret manager)
+Environment=POOL_ADMIN_TOKEN=CHANGEME
+ExecStart=/usr/bin/node src/api/admin-main.js
+Restart=always
+RestartSec=3
+MemoryHigh=256M
+MemoryMax=512M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

@@ -42,6 +42,17 @@ services:
       postgres: { condition: service_healthy }
     networks: [central]
 
+  admin:
+    build: .
+    command: node src/api/admin-main.js
+    environment:
+      POOL_DB_URL: postgres://pool:${POOL_DB_PASSWORD}@postgres:5432/pooltest
+      POOL_ADMIN_TOKEN: ${POOL_ADMIN_TOKEN:?set POOL_ADMIN_TOKEN}
+    ports: ["127.0.0.1:8085:8085"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [central]
+
   # Edge regions: pool-edge + local CKB node (node image/sidecar is ops-defined).
   # Example region edge (points at a local CKB node on the same host/LAN):
   # edge-au:

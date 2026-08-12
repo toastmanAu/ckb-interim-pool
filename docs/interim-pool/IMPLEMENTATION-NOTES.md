@@ -272,6 +272,23 @@ Errors decoded along the way (-2 parse, -31 pubkey mismatch) via the official
 ckb-script-error-codes wiki. Pinned by `test/payout-tx.test.js` (skips
 without the dev node).
 
+## UI (public dashboard + operator console)
+
+- **Public dashboard** (`src/api/dashboard.html`, served at `/`): pool
+  hashrate cards (10m/1h/24h), active miners/workers, round work, network
+  tip/epoch/target, **regions/edges table**, miner lookup (balances,
+  stats, workers, **payout history**), blocks table with state badges,
+  policy + custodial disclaimer. 15s auto-refresh; graceful per-section
+  error states; XSS-escaped rendering.
+- **Operator console** (`src/api/admin.html` + `admin-server.js`,
+  `deploy/systemd/pool-admin.service`, compose `admin` service): binds
+  **127.0.0.1 only**, token auth (`POOL_ADMIN_TOKEN`, timing-safe
+  compare), wraps poolctl operations — block states, allocation
+  recompute audit (hash match vs stored snapshot), ledger conservation
+  verify, payout batch inspect, miner balances, event replay status.
+  Read-only + audit; payouts remain on the timer/CLI (spec 05 §7).
+  `test/admin.integration.test.js` covers auth + endpoints.
+
 ## Remaining gates (not done in this session — ops/deployment)
 
 - Real K7/GodMiner + Goldshell hardware soak (10:00–13:00 window tomorrow);

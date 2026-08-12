@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CKB Interim Pool — Operator</title>
+<style>
+  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --dim:#8b949e; --accent:#3fb950; --warn:#d29922; --danger:#f85149; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, sans-serif; }
+  header { padding:14px 20px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between; align-items:center; }
+  header h1 { font-size:16px; margin:0; }
+  main { max-width:1100px; margin:0 auto; padding:20px; }
+  h2 { font-size:14px; color:var(--dim); margin:18px 0 8px; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #21262d; font-size:12px; font-family:ui-monospace,monospace; }
+  th { color:var(--dim); font-weight:500; }
+  input { background:#0d1117; color:var(--fg); border:1px solid #30363d; border-radius:6px; padding:6px 8px; font-family:ui-monospace,monospace; }
+  button { background:#21262d; color:var(--fg); border:1px solid #30363d; border-radius:6px; padding:6px 10px; cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  .ok { color:var(--accent); } .bad { color:var(--danger); } .muted { color:var(--dim); }
+  pre { background:#161b22; border:1px solid #21262d; border-radius:6px; padding:10px; overflow:auto; max-height:320px; font-size:12px; }
+</style>
+</head>
+<body>
+<header><h1>Pool Operator Console <span class="muted">(localhost only)</span></h1><span class="muted">read-only + audit actions</span></header>
+<main>
+  <h2>Blocks</h2>
+  <div><input id="rehash" placeholder="block hash or id" style="width:420px"> <button onclick="recompute()">recompute allocation (audit)</button></div>
+  <div id="recompute-out"></div>
+  <table><thead><tr><th>state</th><th>height</th><th>reward</th><th>edge</th><th>hash</th></tr></thead>
+  <tbody id="blocks"></tbody></table>
+
+  <h2>Ledger verify</h2>
+  <button onclick="verifyLedger()">run conservation check</button>
+  <pre id="ledger"></pre>
+
+  <h2>Payout batch inspect</h2>
+  <input id="batch" placeholder="batch id" style="width:320px"> <button onclick="inspectBatch()">inspect</button>
+  <pre id="payout"></pre>
+
+  <h2>Event replay status (per edge)</h2>
+  <button onclick="loadEvents()">refresh</button>
+  <pre id="events"></pre>
+
+  <h2>Miner balance</h2>
+  <input id="minerAddr" placeholder="ckb address" style="width:420px"> <button onclick="loadMiner()">lookup</button>
+  <pre id="miner"></pre>
+</main>
+<script>
+const TOKEN = '__TOKEN__';
+const q = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const api = (p) => fetch(p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN)).then(r => r.json());
+
+async function loadBlocks() {
+  const b = await api('/admin/blocks');
+  q('#blocks').innerHTML = b.map(x => `<tr><td>${esc(x.state)}</td><td>${x.height ?? '—'}</td>
+    <td>${x.reward_shannons ?? '—'}</td><td>${esc(x.edge_id)}</td><td class="muted">${esc((x.block_hash || '').slice(0, 16))}…</td></tr>`).join('');
+}
+async function verifyLedger() {
+  const r = await api('/admin/ledger/verify');
+  q('#ledger').textContent = JSON.stringify(r, null, 2) + (r.conserved ? '\n✓ conservation holds' : '\n✗ CONSERVATION FAILURE');
+}
+async function inspectBatch() {
+  const r = await api('/admin/payout?batch=' + encodeURIComponent(q('#batch').value));
+  q('#payout').textContent = JSON.stringify(r, null, 2);
+}
+async function loadEvents() {
+  const r = await api('/admin/events');
+  q('#events').textContent = JSON.stringify(r, null, 2);
+}
+async function loadMiner() {
+  const r = await api('/admin/miner?address=' + encodeURIComponent(q('#minerAddr').value));
+  q('#miner').textContent = JSON.stringify(r, null, 2);
+}
+async function recompute() {
+  const r = await api('/admin/blocks/recompute?hash=' + encodeURIComponent(q('#rehash').value));
+  q('#recompute-out').innerHTML = r.match
+    ? '<p class="ok">✓ allocation hash matches the stored snapshot</p>'
+    : `<p class="bad">✗ MISMATCH — stored ${esc(r.stored_hash)} recomputed ${esc(r.recomputed_hash)}</p>`;
+}
+loadBlocks();
+</script>
+</body>
+</html>

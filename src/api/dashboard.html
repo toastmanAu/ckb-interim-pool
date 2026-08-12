@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CKB Interim Pool</title>
 <style>
-  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --dim:#8b949e; --accent:#3fb950; --warn:#d29922; }
+  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --dim:#8b949e; --accent:#3fb950; --warn:#d29922; --danger:#f85149; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, sans-serif; }
   header { padding:16px 20px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
@@ -15,8 +15,7 @@
   .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
   .card { background:var(--card); border:1px solid #21262d; border-radius:8px; padding:14px; }
   .card .label { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
-  .card .value { font-size:20px; font-weight:600; margin-top:4px; }
-  .addr { font-family:ui-monospace,monospace; color:var(--dim); word-break:break-all; }
+  .card .value { font-size:20px; font-weight:600; margin-top:4px; word-break:break-word; }
   section { margin-top:24px; }
   h2 { font-size:15px; color:var(--dim); font-weight:600; }
   table { width:100%; border-collapse:collapse; }
@@ -24,7 +23,12 @@
   th { color:var(--dim); font-weight:500; }
   input { background:#0d1117; color:var(--fg); border:1px solid #30363d; border-radius:6px; padding:8px 10px; width:100%; font-family:ui-monospace,monospace; }
   .muted { color:var(--dim); font-size:12px; }
+  .state { padding:1px 8px; border-radius:8px; font-size:11px; }
+  .state-MATURE,.state-CONFIRMED,.state-SETTLED_TO_LEDGER { background:#0f2d1a; color:var(--accent); }
+  .state-CANONICAL_IMMATURE,.state-NODE_ACCEPTED,.state-SUBMITTED { background:#2d250f; color:var(--warn); }
+  .state-ORPHANED,.state-NODE_REJECTED,.state-error { background:#2d1412; color:var(--danger); }
   a { color:var(--accent); }
+  .err { color:var(--danger); }
 </style>
 </head>
 <body>
@@ -38,9 +42,21 @@
   </section>
 
   <section>
+    <h2>Network</h2>
+    <div id="network" class="muted">—</div>
+  </section>
+
+  <section>
+    <h2>Regions / edges</h2>
+    <table><thead><tr><th>edge</th><th>region</th><th>status</th><th>last seen</th><th>last event seq</th></tr></thead>
+    <tbody id="edges"></tbody></table>
+  </section>
+
+  <section>
     <h2>Look up a miner by payout address</h2>
     <input id="addr" placeholder="ckb1qy…" value="">
     <div id="miner"></div>
+    <div id="payouts"></div>
   </section>
 
   <section>
@@ -59,49 +75,98 @@ const $ = (s) => document.querySelector(s);
 const fmtShannons = (s) => (Number(BigInt(s || 0)) / 1e8).toFixed(2);
 const fmtHash = (h) => { const n = Number(h); if (n >= 1e15) return (n/1e15).toFixed(2)+' PH/s'; if (n >= 1e12) return (n/1e12).toFixed(2)+' TH/s'; if (n >= 1e9) return (n/1e9).toFixed(2)+' GH/s'; if (n >= 1e6) return (n/1e6).toFixed(2)+' MH/s'; if (n >= 1e3) return (n/1e3).toFixed(2)+' kH/s'; return n+' H/s'; };
 const ts = (t) => t ? new Date(t).toLocaleString() : '—';
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const state = (s) => `<span class="state state-${esc(s)}">${esc(s)}</span>`;
+const get = (p) => fetch(p).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
 async function loadPool() {
-  const p = await fetch('/api/v1/pool').then(r => r.json());
-  $('#pool-cards').innerHTML = [
-    ['Hashrate 10m', fmtHash(p.hashrate_10m)],
-    ['Hashrate 1h', fmtHash(p.hashrate_1h)],
-    ['Hashrate 24h', fmtHash(p.hashrate_24h)],
-    ['Active miners', p.active_miners],
-    ['Active workers', p.active_workers],
-    ['Round work', p.round_work],
-    ['Fee', (p.fee_bps / 100) + '%'],
-    ['Last block', p.last_block ? p.last_block.height : '—'],
-  ].map(([l, v]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+  try {
+    const p = await get('/api/v1/pool');
+    $('#pool-cards').innerHTML = [
+      ['Hashrate 10m', fmtHash(p.hashrate_10m)],
+      ['Hashrate 1h', fmtHash(p.hashrate_1h)],
+      ['Hashrate 24h', fmtHash(p.hashrate_24h)],
+      ['Active miners', p.active_miners],
+      ['Active workers', p.active_workers],
+      ['Round work', p.round_work],
+      ['Fee', (p.fee_bps / 100) + '%'],
+      ['Last block', p.last_block ? '#' + p.last_block.height + ' ' + state(p.last_block.state) : '—'],
+    ].map(([l, v]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+  } catch (e) { $('#pool-cards').innerHTML = `<div class="card err">pool API unreachable (${esc(e.message)})</div>`; }
+}
+
+async function loadNetwork() {
+  try {
+    const n = await get('/api/v1/network');
+    $('#network').textContent = n.available
+      ? `tip height #${n.tip_height.toLocaleString()} · epoch ${n.epoch} · target ${n.compact_target}`
+      : 'network info unavailable (no node connected to the API)';
+  } catch { $('#network').textContent = 'network info unavailable'; }
+}
+
+async function loadEdges() {
+  try {
+    const edges = await get('/api/v1/edges');
+    $('#edges').innerHTML = edges.map(e => `<tr>
+      <td>${esc(e.id)}</td><td>${esc(e.region)}</td><td>${state(e.status)}</td>
+      <td>${ts(e.last_seen_at)}</td><td>${e.last_seq ?? '—'}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="muted">no edges registered yet</td></tr>';
+  } catch { $('#edges').innerHTML = '<tr><td colspan="5" class="muted err">unavailable</td></tr>'; }
 }
 
 async function loadBlocks() {
-  const { blocks } = await fetch('/api/v1/blocks?limit=20').then(r => r.json());
-  $('#blocks').innerHTML = blocks.map(b => `<tr>
-    <td>${b.height ?? '—'}</td><td>${b.state}</td>
-    <td>${b.reward_shannons ? fmtShannons(b.reward_shannons) : '—'}</td>
-    <td>${b.edge_id}</td><td>${ts(b.found_at)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">no blocks yet</td></tr>';
+  try {
+    const { blocks } = await get('/api/v1/blocks?limit=20');
+    $('#blocks').innerHTML = blocks.map(b => `<tr>
+      <td>${b.height ?? '—'}</td><td>${state(b.state)}</td>
+      <td>${b.reward_shannons ? fmtShannons(b.reward_shannons) : '—'}</td>
+      <td>${esc(b.edge_id)}</td><td>${ts(b.found_at)}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="muted">no blocks yet</td></tr>';
+  } catch { $('#blocks').innerHTML = '<tr><td colspan="5" class="muted err">unavailable</td></tr>'; }
 }
 
 async function loadPolicy() {
-  const p = await fetch('/api/v1/policy').then(r => r.json());
-  $('#policy').textContent = `Model: ${p.model} · window: ${p.pplns_window}× network · fee: ${p.fee_bps/100}% · minimum payout: ${fmtShannons(p.minimum_payout_shannons)} CKB · maturity: ${p.maturity}`;
+  try {
+    const p = await get('/api/v1/policy');
+    $('#policy').textContent = `Model: ${p.model} · window: ${p.pplns_window}× network · fee: ${p.fee_bps/100}% · minimum payout: ${fmtShannons(p.minimum_payout_shannons)} CKB · maturity: ${p.maturity}`;
+  } catch { $('#policy').textContent = 'policy unavailable'; }
 }
 
 async function loadMiner(addr) {
   const el = $('#miner');
   if (!addr) { el.innerHTML = ''; return; }
-  const r = await fetch(`/api/v1/miners/${encodeURIComponent(addr)}`);
-  if (r.status === 404) { el.innerHTML = '<p class="muted">unknown address</p>'; return; }
-  const m = await r.json();
-  el.innerHTML = `<table><thead><tr><th>balance</th><th>shannons</th><th>work</th><th>shares</th></tr></thead><tbody>
-    <tr><td>confirmed</td><td>${m.balances.confirmed}</td><td rowspan="4">${m.stats.work}</td><td rowspan="4">${m.stats.shares}</td></tr>
-    <tr><td>immature</td><td>${m.balances.immature}</td></tr>
-    <tr><td>pending payout</td><td>${m.balances.pending_payout}</td></tr>
-    <tr><td>paid</td><td>${m.balances.paid}</td></tr>
-  </tbody></table>
-  <h2>Workers</h2>
-  <table><thead><tr><th>worker</th><th>shares</th><th>last share</th></tr></thead>
-  <tbody>${m.workers.map(w => `<tr><td>${w.worker_name}</td><td>${w.shares}</td><td>${ts(w.last_share_at)}</td></tr>`).join('')}</tbody></table>`;
+  try {
+    const r = await fetch(`/api/v1/miners/${encodeURIComponent(addr)}`);
+    if (r.status === 404) { el.innerHTML = '<p class="muted">unknown address</p>'; return; }
+    if (!r.ok) throw new Error(r.status);
+    const m = await r.json();
+    const bal = m.balances;
+    el.innerHTML = `
+      <h2>Balances <span class="muted">(shannons)</span></h2>
+      <table><thead><tr><th>immature</th><th>confirmed</th><th>pending payout</th><th>paid</th></tr></thead>
+      <tbody><tr><td>${bal.immature}</td><td>${bal.confirmed}</td><td>${bal.pending_payout}</td><td>${bal.paid}</td></tr></tbody></table>
+      <h2>Stats <span class="muted">(${fmtShannons(m.stats.work)} CKB-work total)</span></h2>
+      <table><thead><tr><th>shares</th><th>work (all time)</th><th>work (1h)</th></tr></thead>
+      <tbody><tr><td>${m.stats.shares}</td><td>${m.stats.work}</td><td>${m.stats.work_1h}</td></tr></tbody></table>
+      <h2>Workers</h2>
+      <table><thead><tr><th>worker</th><th>shares</th><th>last share</th></tr></thead>
+      <tbody>${m.workers.map(w => `<tr><td>${esc(w.worker_name)}</td><td>${w.shares}</td><td>${ts(w.last_share_at)}</td></tr>`).join('')}</tbody></table>`;
+    loadMinerPayouts(addr);
+  } catch (e) { el.innerHTML = `<p class="err">lookup failed (${esc(e.message)})</p>`; }
+}
+
+async function loadMinerPayouts(addr) {
+  const host = document.getElementById('payouts');
+  if (!host) return;
+  try {
+    const payouts = await get(`/api/v1/miners/${encodeURIComponent(addr)}/payouts`);
+    host.innerHTML = '<h2>Payout history</h2>' + (payouts.length
+      ? `<table><thead><tr><th>batch</th><th>state</th><th>amount (shannons)</th><th>tx</th><th>broadcast</th></tr></thead>
+         <tbody>${payouts.map(p => `<tr><td>${esc(p.batch_id.slice(0, 8))}…</td><td>${state(p.state)}</td>
+           <td>${p.amount_shannons}</td><td class="muted">${esc((p.tx_hash || '').slice(0, 16))}…</td>
+           <td>${ts(p.broadcast_at)}</td></tr>`).join('')}</tbody></table>`
+      : '<p class="muted">no payouts yet</p>');
+  } catch { host.innerHTML = '<p class="muted">payout history unavailable</p>'; }
 }
 
 let t = null;
@@ -109,8 +174,8 @@ $('#addr').addEventListener('input', (e) => {
   clearTimeout(t);
   t = setTimeout(() => loadMiner(e.target.value.trim()), 400);
 });
-loadPool(); loadBlocks(); loadPolicy();
-setInterval(() => { loadPool(); loadBlocks(); }, 15000);
+loadPool(); loadNetwork(); loadEdges(); loadBlocks(); loadPolicy();
+setInterval(() => { loadPool(); loadNetwork(); loadEdges(); loadBlocks(); }, 15000);
 </script>
 </body>
 </html>
