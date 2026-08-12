@@ -12,7 +12,17 @@ const { buildAndSendPayout } = require('../src/payout/ckb-tx-builder.js');
 const merkle = require('../src/mining/ckb-merkle.js');
 
 const DEV_RPC = process.env.DEV_RPC || 'http://127.0.0.1:8115';
-const KEY = JSON.parse(require('node:fs').readFileSync('/tmp/opencode/pool-key.json', 'utf8'));
+const KEY_FILE = '/tmp/opencode/pool-key.json';
+let up = false;
+try {
+  execSync(`curl -s --max-time 2 ${DEV_RPC} -X POST -H 'Content-Type: application/json' -d '{"id":1,"jsonrpc":"2.0","method":"get_tip_header","params":[]}' | grep -q result`);
+  up = require('node:fs').existsSync(KEY_FILE);
+} catch { up = false; }
+
+// This test needs the dev chain + its generated key (deploy/ckb-dev-test.sh).
+// In CI the file is absent — the test skips; the key is recreated by
+// ckb-dev-test.sh on any dev machine.
+const KEY = up ? JSON.parse(require('node:fs').readFileSync(KEY_FILE, 'utf8')) : null;
 
 function rawRpc(url, method, params) {
   return new Promise((resolve, reject) => {
@@ -36,12 +46,6 @@ async function mineBlock(url) {
   const block = merkle.buildBlockForSubmit(tpl, nonce);
   await rawRpc(url, 'submit_block', [tpl.work_id, block]);
 }
-
-let up = false;
-try {
-  execSync(`curl -s --max-time 2 ${DEV_RPC} -X POST -H 'Content-Type: application/json' -d '{"id":1,"jsonrpc":"2.0","method":"get_tip_header","params":[]}' | grep -q result`);
-  up = true;
-} catch { up = false; }
 
 test('dev chain: signed payout tx accepted by the node', { timeout: 60000, skip: !up }, async () => {
   // flush the mempool so earlier payout txs commit (their cells become spent)
