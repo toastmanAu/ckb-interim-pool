@@ -31,10 +31,6 @@ jobs:
           --health-cmd "pg_isready -U pool"
           --health-interval 5s
           --health-retries 20
-      nats:
-        image: nats:2.10-alpine
-        command: ["-js"]
-        ports: ["4223:4222"]
     env:
       POOL_DB_URL: postgres://pool:pooltest@127.0.0.1:5433/pooltest
       POOL_NATS_URL: nats://127.0.0.1:4223
@@ -45,5 +41,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # NATS with JetStream (service containers cannot pass -js)
+      - run: docker run -d --name pool-nats -p 4223:4222 nats:2.10-alpine -js
       - run: npm run test:db
       - run: npm run test:nats
+      - run: docker rm -f pool-nats
+        if: always()
