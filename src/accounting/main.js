@@ -30,6 +30,33 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const js = nc.jetstream();
   const sc = StringCodec();
 
+  // ── metrics endpoint (spec 06 §8: accounting) ─────────────────────────────
+  const METRICS_PORT = parseInt(process.env.POOL_INGEST_METRICS_PORT || '9101', 10);
+  const metrics = { applied: 0, duplicates: 0, invalid: 0, gaps: 0, db_errors: 0, consumed: 0 };
+  require('node:http').createServer((req, res) => {
+    if (req.url === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, stream: STREAM, subjects: SUBJECTS, ...metrics }));
+      return;
+    }
+    if (req.url === '/metrics') {
+      const lines = [
+        `pool_ingest_events_applied_total ${metrics.applied}`,
+        `pool_ingest_events_duplicate_total ${metrics.duplicates}`,
+        `pool_ingest_events_invalid_total ${metrics.invalid}`,
+        `pool_ingest_seq_gaps_total ${metrics.gaps}`,
+        `pool_ingest_db_errors_total ${metrics.db_errors}`,
+        `pool_ingest_events_consumed_total ${metrics.consumed}`,
+      ];
+      res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
+      res.end(lines.join('\n') + '\n');
+      return;
+    }
+    res.writeHead(404); res.end();
+  }).listen(METRICS_PORT, '127.0.0.1', () => {
+    console.log(`[INGEST] metrics on http://127.0.0.1:${METRICS_PORT}/metrics`);
+  });
+
   // durable ordered consumer — retry until the stream exists (edges boot
   // independently; central must not crash during their startup window)
   let consumer = null;
@@ -63,17 +90,22 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   const iter = await c.consume();
   console.log('[INGEST] consuming', SUBJECTS.join(','), 'from', STREAM);
   for await (const m of iter) {
+    metrics.consumed++;
     let evt;
     try { evt = JSON.parse(sc.decode(m.data)); }
-    catch { invalid++; await m.term(); continue; }
+    catch { metrics.invalid++; invalid++; await m.term(); continue; }
     try {
       const r = await processEvent(db, evt);
-      if (r.status === 'applied') applied++;
-      else if (r.status === 'duplicate') duplicates++;
-      else { invalid++; console.warn('[INGEST] invalid event:', r.errors); }
-      await seqGaps(db, evt, (eid, bid, from, to) => console.warn(`[INGEST] seq gap ${eid}/${bid}: ${from} → ${to}`));
+      if (r.status === 'applied') { metrics.applied++; applied++; }
+      else if (r.status === 'duplicate') { metrics.duplicates++; duplicates++; }
+      else { metrics.invalid++; invalid++; console.warn('[INGEST] invalid event:', r.errors); }
+      await seqGaps(db, evt, (eid, bid, from, to) => {
+        metrics.gaps++;
+        console.warn(`[INGEST] seq gap ${eid}/${bid}: ${from} → ${to}`);
+      });
       await m.ack();
     } catch (e) {
+      metrics.db_errors++;
       console.error('[INGEST] apply failed:', e.message, '— requeueing');
       await m.nak(2_000_000_000);
     }

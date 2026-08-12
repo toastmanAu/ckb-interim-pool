@@ -1,0 +1,69 @@
+# Alert rules — CKB Interim Pool (spec 06 §9)
+#
+# Note: rules referencing block-orphan / ledger-conservation / payout-state
+# metrics are pending a block-state exporter (Phase 10) and are listed at the
+# bottom as comments so they are not silently dead.
+groups:
+  - name: pool-critical
+    rules:
+      # ── edge ──────────────────────────────────────────────────────────────
+      - alert: EdgeNoFreshTemplate
+        expr: absent(pool_template_height)
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "edge has no fresh template — CKB node may be stuck or offline"
+      - alert: EdgeDown
+        expr: up{job=~"pool-edge.*"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "edge down or unreachable" }
+      - alert: EdgeSpoolNearCapacity
+        expr: pool_spool_bytes / pool_spool_max_bytes > 0.75
+        for: 5m
+        labels: { severity: critical }
+        annotations: { summary: "event spool near capacity — drain the bus" }
+      - alert: EdgeBlockSubmitFailed
+        expr: increase(pool_block_submit_failed_total[15m]) > 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "a block candidate failed node submission" }
+
+      # ── accounting ────────────────────────────────────────────────────────
+      - alert: IngestSequenceGap
+        expr: increase(pool_ingest_seq_gaps_total[15m]) > 0
+        labels: { severity: critical }
+        annotations: { summary: "edge sequence gap persists — inspect replay" }
+      - alert: IngestDbErrors
+        expr: increase(pool_ingest_db_errors_total[15m]) > 0
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "DB errors in ingest — check PostgreSQL" }
+      - alert: IngestNoEvents
+        expr: increase(pool_ingest_events_consumed_total[10m]) == 0 AND up{job="pool-accounting"} == 1
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "ingest alive but no events flowing — edges or bus issue" }
+
+  - name: pool-warning
+    rules:
+      - alert: StaleRateElevated
+        expr: rate(pool_shares_stale_acked_total[1h]) / clamp_min(rate(pool_shares_accepted_total[1h]), 1) > 0.1
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "stale rate above baseline" }
+      - alert: RejectSpike
+        expr: rate(pool_shares_rejected_total[15m]) / clamp_min(rate(pool_shares_accepted_total[15m]), 1) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations: { summary: "reject rate spike — check vardiff/miner family" }
+      - alert: VardiffInstability
+        expr: rate(pool_vardiff_changes_total[1h]) > 120
+        for: 15m
+        labels: { severity: warning }
+        annotations: { summary: "excessive vardiff churn" }
+
+  # Phase 10 (block-state exporter): 
+  #   - alert: BlockOrphaned          expr: pool_blocks_orphaned_total > 0
+  #   - alert: LedgerConservation     expr: pool_ledger_conservation_failures_total > 0
+  #   - alert: PayoutSigningAnomaly   expr: pool_payout_errors_total > 0

@@ -49,6 +49,12 @@ async function buildSink(config) {
   console.log(`[EDGE] boot edge=${config.edge.id} boot=${config.bootId || '(new)'} bus=${config.events.bus}`);
   const sink = await buildSink(config);
   const edge = createEdge({ configPath, sink });
+  // spool capacity gauges for the Prometheus alert (spec 06 §8)
+  if (sink.spool) {
+    const { metrics } = edge.edgeServer;
+    metrics.gauge('spool_max_bytes', config.spool.maxBytes);
+    setInterval(() => metrics.gauge('spool_bytes', sink.spool.bytes), 5000).unref();
+  }
   edge.start();
   process.on('SIGINT', () => { edge.stop(); process.exit(0); });
   process.on('SIGTERM', () => { edge.stop(); process.exit(0); });

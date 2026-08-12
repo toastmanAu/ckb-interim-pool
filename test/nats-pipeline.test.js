@@ -89,11 +89,14 @@ test('bus outage → spool → replay → exactly-once', { timeout: 90000 }, asy
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-nats-'));
 
   console.error("P1 start");
-  // clean slate: drop any stream left by previous runs
+  // clean slate: drop any streams left by previous runs (drills, rehearsals)
   {
     const nc = await connect({ servers: NATS_URL, timeout: 3000 });
     const jsm = await nc.jetstreamManager();
-    try { await jsm.streams.delete(STREAM); } catch {}
+    const it = await jsm.streams.list();
+    for await (const s of it) {
+      try { await jsm.streams.delete(s.config.name); } catch {}
+    }
     await nc.close();
   }
 

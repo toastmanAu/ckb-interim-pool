@@ -1,0 +1,27 @@
+# Prometheus scrape configs — CKB Interim Pool (spec 06 §8)
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alerts.yml
+
+scrape_configs:
+  # one job per edge region; edge /metrics is on the stats port (config)
+  - job_name: pool-edge-au
+    static_configs:
+      - targets: ["au-edge-host:8082"]
+  - job_name: pool-edge-eu
+    static_configs:
+      - targets: ["eu-edge-host:8082"]
+  - job_name: pool-edge-us
+    static_configs:
+      - targets: ["us-edge-host:8082"]
+
+  - job_name: pool-accounting
+    static_configs:
+      - targets: ["central-host:9101"]
+
+  - job_name: pool-nats
+    static_configs:
+      - targets: ["central-host:8222"]

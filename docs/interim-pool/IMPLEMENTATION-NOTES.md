@@ -206,9 +206,45 @@ Bugs found and fixed during the rehearsal:
   when a publish matches no stream (fail loud, retry — never treat as
   published). The spool keeps such events until they land.
 
+## Phase 9 — deployment hardening
+
+- **mTLS event bus**: `deploy/gen-nats-tls.sh` (CA + server + per-edge +
+  ingest client certs, SAN DNS = username), `deploy/nats-server.conf`
+  (TLS `verify_and_map` + per-edge publish isolation — edge-<region> can
+  publish only `pool.v1.edge.<id>.>`; ingest subscribes to all), transport
+  mTLS support (`tls: {caFile, certFile, keyFile}`). Verified live
+  (test/nats-tls.integration.test.js): edge-au publish lands, edge-au
+  subscription to edge-eu's namespace is denied by the server, ingest reads
+  both. NATS 2.10 maps the client cert CN via the SAN DNS entry.
+- **systemd units** (`deploy/systemd/`): pool-ingest, pool-api,
+  pool-payout.service+timer (hourly), pool-edge@.service (one instance per
+  region config) — hardened (NoNewPrivileges, ProtectSystem, memory caps).
+- **Metrics + alerts**: ingest now exposes Prometheus /metrics + /health
+  (applied/duplicate/invalid/gaps/db_errors/consumed); edge gained
+  `vardiff_changes_total` + spool capacity gauges; `deploy/prometheus/`
+  scrape configs + alert rules per spec 06 §9 (orphan/conservation/payout
+  rules marked Phase 10 — pending a block-state exporter).
+- **Backup/restore**: `deploy/backup.sh` (custom-format pg_dump + 30d
+  retention), `deploy/restore.sh` (drop+restore with explicit confirmation).
+- **Runbook**: `docs/interim-pool/RUNBOOK.md` — startup order, daily checks,
+  failure procedures (edge/region, central, bus, node, payout), backup
+  drill, upgrades, secrets map, region checklist.
+- **Phase 9 gate drills** (automated, both passing against the live stack):
+  - `deploy/drill-region-loss.sh` — two edges mine; edge-2 killed; edge-1
+    continues; edge-2 restarts (new boot id) + spool replay → 1298 shares
+    across both regions in PostgreSQL, zero duplicates.
+  - `deploy/drill-central-outage.sh` — NATS stopped mid-mining; shares keep
+    flowing into the spool; NATS restarted → all 898 shares exactly once.
+  - Bug found by the drills: drill/rehearsal configs must use unique subject
+    namespaces or the test server accumulates overlapping streams
+    (cleanup now deletes all streams at start of every drill/test).
+
 ## Remaining gates (not done in this session — ops/deployment)
 
 - Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.
+- Real multi-host region deployment (drills pass locally; two hosts +
+  firewall/NTP verification on real hosts).
+- Block-state exporter for the orphan/conservation/payout alerts (Phase 10).
 - Real testnet block-to-payout lifecycle; payout dry-run vs real wallet.
 - Multi-region drills (two edges, central outage, spool replay together).
 - 24h+ soak, restore/replay drills, secrets isolation, alerts, runbook

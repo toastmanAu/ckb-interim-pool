@@ -1,0 +1,10 @@
+[Unit]
+Description=CKB Interim Pool — payout sweep timer (hourly)
+After=network-online.target
+
+[Timer]
+OnCalendar=*-*-* *:10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

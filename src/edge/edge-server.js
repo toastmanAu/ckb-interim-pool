@@ -130,6 +130,7 @@ function createEdgeServer({ config, templateService, blockSubmitter, sink, logge
   }
 
   function sendVardiff(session) {
+    metrics.inc('vardiff_changes_total');
     const msgs = vardiffMessagesFor(session.family, session.vardiff.state.currentDiff);
     for (const m of msgs) sendToMiner(session, { id: null, method: m.method, params: m.params });
   }

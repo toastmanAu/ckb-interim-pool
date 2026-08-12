@@ -38,7 +38,8 @@ const { connect } = require('nats');
 (async () => {
   const nc = await connect({ servers: '$POOL_NATS_URL' });
   const jsm = await nc.jetstreamManager();
-  try { await jsm.streams.delete('$STREAM'); } catch {}
+  const it = await jsm.streams.list();
+  for await (const s of it) { try { await jsm.streams.delete(s.config.name); } catch {} }
   await nc.close();
 })();
 "

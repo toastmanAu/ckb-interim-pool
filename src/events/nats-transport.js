@@ -20,7 +20,12 @@ function createNatsTransport({ servers = ['nats://127.0.0.1:4222'], stream = 'PO
   async function start() {
     const opts = { servers, name: 'pool-edge-publisher' };
     if (credsFile) opts.authenticator = require('nats').credsAuthenticator(fs.readFileSync(credsFile));
-    if (tls) opts.tls = {};
+    if (tls) {
+      // mTLS: tls: true (server auth only) or tls: { caFile, certFile, keyFile }
+      opts.tls = tls === true ? {} : {
+        caFile: tls.caFile, certFile: tls.certFile, keyFile: tls.keyFile,
+      };
+    }
     nc = await connect(opts);
     js = nc.jetstream();
     const jsm = await nc.jetstreamManager();

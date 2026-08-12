@@ -1,0 +1,23 @@
+[Unit]
+Description=CKB Interim Pool — public API + dashboard (read-only)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pool
+Group=pool
+WorkingDirectory=/opt/wyltek-pool
+Environment=POOL_DB_URL=postgres://pool:CHANGEME@127.0.0.1:5432/pooltest
+Environment=POOL_API_PORT=8080
+ExecStart=/usr/bin/node src/api/main.js
+Restart=always
+RestartSec=3
+MemoryHigh=512M
+MemoryMax=1G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

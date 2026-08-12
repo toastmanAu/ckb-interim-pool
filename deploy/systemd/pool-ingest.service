@@ -1,0 +1,31 @@
+[Unit]
+Description=CKB Interim Pool — accounting consumer (NATS JetStream → PostgreSQL)
+Documentation=file:///opt/wyltek-pool/docs/interim-pool/09-IMPLEMENTATION-PLAN.md
+After=network-online.target postgresql.service nats.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pool
+Group=pool
+WorkingDirectory=/opt/wyltek-pool
+Environment=POOL_DB_URL=postgres://pool:CHANGEME@127.0.0.1:5432/pooltest
+Environment=POOL_NATS_URL=tls://127.0.0.1:4222
+Environment=POOL_STREAM=POOL_V1
+Environment=POOL_EVENT_SUBJECTS=pool.v1.edge.>
+# mTLS client identity (CN=ingest, see deploy/gen-nats-tls.sh)
+Environment=POOL_NATS_TLS_CA=/etc/wyltek-pool/nats-tls/ca.crt
+Environment=POOL_NATS_TLS_CERT=/etc/wyltek-pool/nats-tls/ingest.crt
+Environment=POOL_NATS_TLS_KEY=/etc/wyltek-pool/nats-tls/ingest.key
+ExecStart=/usr/bin/node src/accounting/main.js
+Restart=always
+RestartSec=3
+MemoryHigh=1G
+MemoryMax=2G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/wyltek-pool
+
+[Install]
+WantedBy=multi-user.target

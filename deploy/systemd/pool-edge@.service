@@ -1,0 +1,32 @@
+# pool-edge@.service — template unit; one instance per region config.
+#
+#   systemctl enable pool-edge@au-adelaide-01
+#   systemctl enable pool-edge@eu-frankfurt-01
+#
+# Instance name = config file basename in /etc/wyltek-pool/edges/:
+#   /etc/wyltek-pool/edges/au-adelaide-01.json  →  pool-edge@au-adelaide-01
+
+[Unit]
+Description=CKB Interim Pool — Stratum edge %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pool
+Group=pool
+WorkingDirectory=/opt/wyltek-pool
+Environment=POOL_CONFIG=/etc/wyltek-pool/edges/%i.json
+ExecStart=/usr/bin/node src/edge/main.js
+Restart=always
+RestartSec=3
+MemoryHigh=512M
+MemoryMax=1G
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+# WAL + spool must stay writable:
+ReadWritePaths=/var/lib/wyltek-pool/%i
+
+[Install]
+WantedBy=multi-user.target

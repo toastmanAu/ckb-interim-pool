@@ -1,0 +1,22 @@
+[Unit]
+Description=CKB Interim Pool — payout sweep (one run per timer tick)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pool
+Group=pool
+WorkingDirectory=/opt/wyltek-pool
+Environment=POOL_DB_URL=postgres://pool:CHANGEME@127.0.0.1:5432/pooltest
+Environment=POOL_PAYOUT_KEY=/etc/wyltek-pool/payout.privkey
+Environment=POOL_NODE_RPC=http://127.0.0.1:8114
+Environment=POOL_MAX_TX_FEE_SHANNONS=2000000
+ExecStart=/usr/bin/node src/payout/main.js
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+
+# Dry-run rehearsal mode (switch to run real payouts only after the testnet
+# drill and an explicit operator decision):
+# Environment=POOL_PAYOUT_DRY_RUN=1
