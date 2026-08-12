@@ -26,6 +26,7 @@ const { createEdgeSink } = require('../src/events/edge-sink.js');
 const { uuidv7 } = require('../src/common/ids.js');
 
 const NATS_URL = process.env.POOL_NATS_URL || 'nats://127.0.0.1:4223';
+const NATS_CONTAINER = process.env.POOL_NATS_CONTAINER || 'pool-nats-test';
 const STREAM = 'POOL_V1_TEST';
 
 const BOOT_A = uuidv7();
@@ -126,8 +127,8 @@ test('bus outage → spool → replay → exactly-once', { timeout: 90000 }, asy
   assert.ok([...seen.values()].every(c => c === 1), 'no duplicates');
 
   // ── phase 2: NATS down; shares keep flowing into the spool ───────────────
-  execSync('docker stop pool-nats-test >/dev/null 2>&1 || true');
-  t.after(() => { try { execSync('docker start pool-nats-test >/dev/null 2>&1'); } catch {} });
+  execSync(`docker stop ${NATS_CONTAINER} >/dev/null 2>&1 || true`);
+  t.after(() => { try { execSync(`docker start ${NATS_CONTAINER} >/dev/null 2>&1`); } catch {} });
   await new Promise(r => setTimeout(r, 300));
 
   for (let i = 4; i <= 8; i++) {
@@ -141,7 +142,7 @@ test('bus outage → spool → replay → exactly-once', { timeout: 90000 }, asy
   sink.close();
 
   // ── phase 3: NATS back; new edge boot replays the old segment ────────────
-  execSync('docker start pool-nats-test >/dev/null 2>&1');
+  execSync(`docker start ${NATS_CONTAINER} >/dev/null 2>&1`);
   await new Promise(r => setTimeout(r, 2000));
 
   const transport2 = await createNatsTransport({ servers: [NATS_URL], stream: STREAM, logger: { log: () => {} } }).start();

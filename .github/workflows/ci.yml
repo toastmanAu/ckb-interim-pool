@@ -43,7 +43,11 @@ jobs:
       - run: npm ci
       # NATS with JetStream (service containers cannot pass -js)
       - run: docker run -d --name pool-nats -p 4223:4222 nats:2.10-alpine -js
+        env:
+          POOL_NATS_CONTAINER: pool-nats
       - run: npm run test:db
       - run: npm run test:nats
+        env:
+          POOL_NATS_CONTAINER: pool-nats
       - run: docker rm -f pool-nats
         if: always()
