@@ -21,9 +21,8 @@
     "ajv": "^8.20.0",
     "nats": "^2.29.3",
     "pg": "^8.23.0",
-    "ws": "^8.18.0"
-  },
-  "devDependencies": {
+    "ws": "^8.18.0",
     "@noble/curves": "^2.3.0"
-  }
+  },
+  "devDependencies": {}
 }
