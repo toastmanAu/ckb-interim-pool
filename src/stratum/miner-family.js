@@ -63,7 +63,7 @@ function subscribeResponseFor(family, msgId, params, sessionId) {
 /**
  * Build a mining.notify for a specific miner family.
  * @param {string} family  'godminer' | 'goldshell'
- * @param {object} job     job snapshot { jobId:int, powHash:hex64, height:int, targetLE:hex64 }
+ * @param {object} job     job snapshot { jobId:int, wireJobId?:string, powHash:hex64, height:int, targetLE:hex64 }
  * @param {boolean} clean  clean_jobs flag
  * @returns {null|{id:null,method:'mining.notify',params:Array}}
  */
@@ -74,7 +74,7 @@ function buildNotifyFor(family, job, clean) {
     id: null,
     method: 'mining.notify',
     params: [
-      job.jobId.toString(16),
+      job.wireJobId || job.jobId.toString(16),
       job.powHash,
       job.height,
       target,
