@@ -291,4 +291,12 @@ module.exports = {
   templateTransactions,
   templateToHeaderFields,
   buildBlockForSubmit,
+  // molecule builders — exported for payout transaction construction
+  // (same code path that is pinned byte-for-byte by the txHash tests)
+  rawTransaction,
+  transaction,
+  molBytes,
+  fixvec,
+  script,
+  offsetContainer,
 };
