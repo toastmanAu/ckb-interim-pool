@@ -76,7 +76,7 @@ while true; do
     ACC=$(echo "$M" | awk -F' ' '/shares_accepted_total/{print $2; exit}')
     REJ=$(echo "$M" | awk -F' ' '/shares_rejected_total/{print $2; exit}')
     SESS=$(echo "$H" | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>process.stdout.write(String(JSON.parse(d).sessions)))')
-    echo "[$TS] sessions=$SESS accepted=$ACC rejected=$REJ"
+    echo "[$TS] sessions=${SESS:-0} accepted=${ACC:-0} rejected=${REJ:-0}"
   else
     echo "[$TS] edge not responding — is it still up?" | tee -a "$LOG"
   fi
