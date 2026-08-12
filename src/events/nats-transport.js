@@ -12,7 +12,7 @@
 
 const { connect, StringCodec } = require('nats');
 
-function createNatsTransport({ servers = ['nats://127.0.0.1:4222'], stream = 'POOL_V1', credsFile = null, tls = false, logger = console }) {
+function createNatsTransport({ servers = ['nats://127.0.0.1:4222'], stream = 'POOL_V1', credsFile = null, tls = false, subjects = ['pool.v1.edge.>'], logger = console }) {
   const sc = StringCodec();
   let nc = null;
   let js = null;
@@ -27,7 +27,7 @@ function createNatsTransport({ servers = ['nats://127.0.0.1:4222'], stream = 'PO
     try {
       await jsm.streams.info(stream);
     } catch {
-      await jsm.streams.add({ name: stream, subjects: ['pool.v1.edge.>'], retention: 'workqueue' });
+      await jsm.streams.add({ name: stream, subjects, retention: 'workqueue' });
     }
     logger.log('NATS', `connected to ${servers.join(',')} stream=${stream}`);
     return this;

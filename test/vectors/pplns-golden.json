@@ -1,0 +1,520 @@
+{
+  "generated_by": "test/tools/gen-pplns-vectors.js",
+  "vectors": [
+    {
+      "name": "one-miner",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "4294967296"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "A",
+            "workUnits": "4294967296"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "A",
+            "workUnits": "4294967296"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "12884901888",
+            "creditShannons": "108900000000"
+          }
+        ],
+        "totalWork": "12884901888",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-003",
+        "allocationHash": "a4e1eb3fd9d4e9dda4471e9a279d2bc5c95e871d245a8ffbcce88b54e4dcc20c"
+      }
+    },
+    {
+      "name": "two-equal-miners",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "B",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-004",
+            "miner": "B",
+            "workUnits": "2018634629120000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "54450000000"
+          },
+          {
+            "miner": "B",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "54450000000"
+          }
+        ],
+        "totalWork": "8074538516480000000",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-004",
+        "allocationHash": "104ada725cb7cb0970ddc29aa7f81ae5982b7c19d17ebf2c956a312bd04d012d"
+      }
+    },
+    {
+      "name": "unequal-work",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "B",
+            "workUnits": "4294967296"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "108899999884"
+          },
+          {
+            "miner": "B",
+            "workUnits": "4294967296",
+            "creditShannons": "116"
+          }
+        ],
+        "totalWork": "4037269262534967296",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-003",
+        "allocationHash": "4db4bee7486bb8e0b0f786380f70b0faacd47dd8f3d2d45f6f964422bd55e372"
+      }
+    },
+    {
+      "name": "vardiff-mixed",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "4294967296"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "A",
+            "workUnits": "4294967296"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "B",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-004",
+            "miner": "A",
+            "workUnits": "4294967296000000"
+          },
+          {
+            "shareId": "s-005",
+            "miner": "A",
+            "workUnits": "4294967296"
+          },
+          {
+            "shareId": "s-006",
+            "miner": "B",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-007",
+            "miner": "A",
+            "workUnits": "4294967296"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "4294984475869184",
+            "creditShannons": "115728411"
+          },
+          {
+            "miner": "B",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "108784271589"
+          }
+        ],
+        "totalWork": "4041564242715869184",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-007",
+        "allocationHash": "df40542ad64a8efd0cf9d3c5744d76852dd92a41f91a58a188a44de0715795f7"
+      }
+    },
+    {
+      "name": "exact-window-boundary",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "4000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "2000000000000000000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "B",
+            "workUnits": "2000000000000000000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "A",
+            "workUnits": "2000000000000000000000"
+          },
+          {
+            "shareId": "s-004",
+            "miner": "B",
+            "workUnits": "2000000000000000000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "4000000000000000000000",
+            "creditShannons": "54450000000"
+          },
+          {
+            "miner": "B",
+            "workUnits": "4000000000000000000000",
+            "creditShannons": "54450000000"
+          }
+        ],
+        "totalWork": "8000000000000000000000",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-004",
+        "allocationHash": "2a899cdecaaf7bc9c04ea6436b8afe0aa6a7bf36de74beb9bd5668c9a79202a1"
+      }
+    },
+    {
+      "name": "boundary-crossing-share-included",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "3000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "1000000000000000000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "B",
+            "workUnits": "4000000000000000000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "C",
+            "workUnits": "1000000000000000000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "1000000000000000000000",
+            "creditShannons": "18150000000"
+          },
+          {
+            "miner": "B",
+            "workUnits": "4000000000000000000000",
+            "creditShannons": "72600000000"
+          },
+          {
+            "miner": "C",
+            "workUnits": "1000000000000000000000",
+            "creditShannons": "18150000000"
+          }
+        ],
+        "totalWork": "6000000000000000000000",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-003",
+        "allocationHash": "8d8fc02962a3e289e8d524901b56e811ecae225ad2becb56cd173d4d015b48ac"
+      }
+    },
+    {
+      "name": "very-large-work",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "90071992547409930000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "90071992547409930000000000000000000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "B",
+            "workUnits": "90071992547409930000000000000000000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "A",
+            "workUnits": "90071992547409930000000000000000000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "90071992547409930000000000000000000000",
+            "creditShannons": "54450000000"
+          },
+          {
+            "miner": "B",
+            "workUnits": "90071992547409930000000000000000000000",
+            "creditShannons": "54450000000"
+          }
+        ],
+        "totalWork": "180143985094819860000000000000000000000",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-002",
+        "windowEndShareId": "s-003",
+        "allocationHash": "7105bbd90dfa5fbd548fc1c919b29660c042501a763811e5e9fd52e08273c783"
+      }
+    },
+    {
+      "name": "fee-floor-odd-reward",
+      "input": {
+        "rewardShannons": "100000000001",
+        "feeBps": 100,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "99000000001"
+          }
+        ],
+        "totalWork": "4037269258240000000",
+        "feeShannons": "1000000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-002",
+        "allocationHash": "d7abb93342e69e2f42abd86ead912cf67cf9cc1157bd1e8563bccf83877c6e82"
+      }
+    },
+    {
+      "name": "largest-remainder-tie",
+      "input": {
+        "rewardShannons": "100000000003",
+        "feeBps": 0,
+        "windowNum": 2,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "bbb",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "aaa",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "bbb",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-004",
+            "miner": "aaa",
+            "workUnits": "2018634629120000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "aaa",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "50000000002"
+          },
+          {
+            "miner": "bbb",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "50000000001"
+          }
+        ],
+        "totalWork": "8074538516480000000",
+        "feeShannons": "0",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-004",
+        "allocationHash": "5ee5768452d982f9575b6d53ea076dabc900cefcf984ecfadf759edc4e822d53"
+      }
+    },
+    {
+      "name": "window-multiplier-change-w3",
+      "input": {
+        "rewardShannons": "110000000000",
+        "feeBps": 100,
+        "windowNum": 3,
+        "windowDen": 1,
+        "networkWork": "1000000000000000000000",
+        "orderedShares": [
+          {
+            "shareId": "s-001",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-002",
+            "miner": "B",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-003",
+            "miner": "C",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-004",
+            "miner": "A",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-005",
+            "miner": "B",
+            "workUnits": "2018634629120000000"
+          },
+          {
+            "shareId": "s-006",
+            "miner": "C",
+            "workUnits": "2018634629120000000"
+          }
+        ]
+      },
+      "expected": {
+        "allocation": [
+          {
+            "miner": "A",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "36300000000"
+          },
+          {
+            "miner": "B",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "36300000000"
+          },
+          {
+            "miner": "C",
+            "workUnits": "4037269258240000000",
+            "creditShannons": "36300000000"
+          }
+        ],
+        "totalWork": "12111807774720000000",
+        "feeShannons": "1100000000",
+        "roundingShannons": "0",
+        "windowStartShareId": "s-001",
+        "windowEndShareId": "s-006",
+        "allocationHash": "98e143f087d6d9f97ad167c32df28ef8ac6cf94065ecf808d2397575f9639068"
+      }
+    }
+  ]
+}
