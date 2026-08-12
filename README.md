@@ -33,6 +33,17 @@ Ship a reliable public CKB PPLNS pool quickly by extending the proven `ckb-strat
 
 Drop this folder into the root of the working repository. The coding agent should read `agent/CODING_AGENT_PROMPT.md` first, then the numbered specifications in order.
 
+## Security note for public readers
+
+- This is an **operator-custodied** pool (v1). No trust-minimized guarantees.
+- All monetary amounts are integer shannons; accounting is a double-entry
+  ledger with conservation checks.
+- TLS material (`deploy/gen-nats-tls.sh` output) is generated per
+  deployment and never committed. Payout private keys live only on the
+  payout host. The CKB node RPC is private-network only.
+- `deploy/pg-test.sh`/`deploy/nats-test.sh`/`deploy/ckb-dev-test.sh` spin
+  up local dev containers with throwaway credentials — not for production.
+
 ## Upstream references reviewed
 
 - https://github.com/toastmanAu/ckb-stratum-proxy
