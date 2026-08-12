@@ -14,8 +14,8 @@
     "lint": "node --check src/edge/edge-server.js && node --check src/edge/template-service.js && node --check src/events/spool.js && node --check src/events/publisher.js && node --check src/events/edge-sink.js",
     "edge": "node src/edge/main.js",
     "ingest": "node src/accounting/ingest.js",
-    "api": "node src/api/api-server.js",
-    "payout": "node src/payout/payout-worker.js"
+    "api": "node src/api/main.js",
+    "payout": "node src/payout/main.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",

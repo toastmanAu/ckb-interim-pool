@@ -137,9 +137,6 @@ async function cmdEvents(db) {
     `SELECT edge_id, boot_id, count(*)::int events, max(edge_seq) max_seq FROM ingested_events
      GROUP BY edge_id, boot_id ORDER BY edge_id`,
   )).rows;
-  const pending = (await db.query(
-    `SELECT count(*)::int c FROM ingested_events WHERE processed = true`,
-  )).rows[0];
   console.log(JSON.stringify({ per_edge: perEdge }, null, 2));
 }
 
