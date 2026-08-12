@@ -92,21 +92,25 @@ async function upsertBlockFromSubmit(db, evt) {
   const res = await db.query(
     `INSERT INTO blocks (candidate_event_id, edge_id, boot_id, job_id, nonce, height,
                          parent_hash, state, node_submit_result, found_at,
-                         node_accepted_at)
+                         node_accepted_at, template_json)
      VALUES (NULL, $1, $2, $3, $4, $5, $6,
              CASE WHEN $7 THEN 'NODE_ACCEPTED' ELSE 'NODE_REJECTED' END,
              $8::jsonb, to_timestamp($9 / 1000.0),
-             CASE WHEN $7 THEN to_timestamp($9 / 1000.0) ELSE NULL END)
+             CASE WHEN $7 THEN to_timestamp($9 / 1000.0) ELSE NULL END,
+             $10::jsonb)
      ON CONFLICT (edge_id, boot_id, job_id, nonce) DO UPDATE SET
        state = CASE WHEN blocks.state IN ('NODE_ACCEPTED','NODE_REJECTED') THEN blocks.state
                     ELSE EXCLUDED.state END,
        node_submit_result = EXCLUDED.node_submit_result,
+       template_json = COALESCE(blocks.template_json, EXCLUDED.template_json),
+       height = COALESCE(blocks.height, EXCLUDED.height),
+       parent_hash = COALESCE(blocks.parent_hash, EXCLUDED.parent_hash),
        node_accepted_at = CASE WHEN EXCLUDED.state = 'NODE_ACCEPTED' AND blocks.node_accepted_at IS NULL
                                THEN EXCLUDED.node_accepted_at ELSE blocks.node_accepted_at END
      RETURNING id`,
     [evt.edge_id, evt.edge_boot_id, evt.job_id, evt.nonce, evt.height,
      evt.parent_hash, evt.submit_ok, JSON.stringify({ result: evt.node_submit_result }),
-     evt.submitted_at_ms],
+     evt.submitted_at_ms, JSON.stringify(evt.header || {})],
   );
   return res.rows[0]?.id;
 }

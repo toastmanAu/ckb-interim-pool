@@ -1,0 +1,124 @@
+'use strict';
+/**
+ * allocator.test.js — allocation + ledger: conservation, idempotency,
+ * immutability.
+ */
+const test = require('node:test');
+const assert = require('node:assert');
+const { execSync } = require('node:child_process');
+const path = require('node:path');
+
+const { createDb } = require('../src/accounting/db.js');
+const { allocateMatureBlock } = require('../src/accounting/allocator.js');
+const { balanceFor, verifyBlockConservation, ACCOUNTS } = require('../src/accounting/ledger.js');
+const { uuidv7 } = require('../src/common/ids.js');
+
+const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
+const MIGRATIONS = path.join(__dirname, '..', 'db', 'migrations');
+
+let dbReady = false;
+try {
+  execSync(`docker exec pool-pg-test pg_isready -U pool >/dev/null 2>&1`);
+  dbReady = true;
+} catch { dbReady = false; }
+
+const BOOT = 'aabbccdd00112233445566778899eef0';
+const EDGE = 'test-edge-01';
+const ADDR_A = 'ckb1qyqt8xaupvm8837nv3gtc9x0ekkj64vud3jqfwyw5v';
+const ADDR_B = 'ckb1qzda0cr08m85hc8jlnfp3zer7xulejywt49kt2rr0vthywaa50xwsqdnnw7qkdnnclfkg59uzn8umtfd2kwxceqxwquc4';
+
+async function seedMiner(db, address, worker) {
+  const m = await db.query(
+    `INSERT INTO miners (payout_address, network) VALUES ($1, 'ckb')
+     ON CONFLICT (payout_address) DO NOTHING RETURNING id`,
+    [address],
+  );
+  const minerId = m.rows[0]?.id || (await db.query(`SELECT id FROM miners WHERE payout_address = $1`, [address])).rows[0].id;
+  const w = await db.query(
+    `INSERT INTO workers (miner_id, worker_name) VALUES ($1, $2) RETURNING id`,
+    [minerId, worker],
+  );
+  return { minerId: minerId.replace ? minerId : String(minerId), workerId: w.rows[0].id };
+}
+
+test('allocation + ledger: conservation, idempotency, immutable snapshot', { timeout: 60000, skip: !dbReady }, async t => {
+  const db = createDb(DB_URL);
+  t.after(() => db.close());
+  await db.migrate(MIGRATIONS);
+  await db.query('TRUNCATE ledger_entries, block_allocations, block_allocation_items, blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges, config_snapshots CASCADE');
+
+  const { minerId: aId } = await seedMiner(db, ADDR_A, 'k7-01');
+  const { minerId: bId } = await seedMiner(db, ADDR_B, 'gs-1');
+  const { minerId: cId } = await seedMiner(db, ADDR_B, 'gs-2');
+
+  // share history: A and B (2 workers) — 8 shares, mixed work
+  const workA = '2018634629120000000';   // ~470k diff
+  const workB = '4294967296000000';      // 1M diff
+  const t0 = Date.now();
+  const shareIds = [];
+  const shareSeq = [
+    [aId, workA], [bId, workB], [aId, workA], [aId, workA],
+    [bId, workB], [aId, workA], [bId, workB], [aId, workA],   // winning share last
+  ];
+  for (let i = 0; i < shareSeq.length; i++) {
+    const [minerId, work] = shareSeq[i];
+    const r = await db.query(
+      `INSERT INTO share_events
+         (id, edge_id, boot_id, edge_seq, session_id, miner_id, worker_id,
+          job_id, template_work_id, work_units, assigned_target, pow_hash,
+          nonce, hash, accepted_at, is_block_candidate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,to_timestamp($15/1000.0),$16)
+       RETURNING id::text`,
+      [uuidv7(), EDGE, BOOT, i + 1, uuidv7(), minerId, (await db.query('SELECT id FROM workers LIMIT 1')).rows[0].id,
+       `job${i}`, '0x1', work, 'q', 'ab'.repeat(32), '0x' + i.toString(16).padStart(32, '0'),
+       '0x' + 'ef'.repeat(32), t0 + i * 1000, i === shareSeq.length - 1],
+    );
+    shareIds.push(r.rows[0].id);
+  }
+
+  // the block: MATURE, reward 1100 CKB, template with compact target
+  const reward = 110000000000n;
+  const blockR = await db.query(
+    `INSERT INTO blocks (id, candidate_event_id, edge_id, boot_id, job_id, nonce, miner_id,
+                         height, parent_hash, state, reward_shannons, template_json, block_epoch_json)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,123456,'0x' || repeat('00',31) || '01','MATURE',$8,
+             $9::jsonb, '0x5')
+     RETURNING id::text`,
+    [uuidv7(), shareIds[shareIds.length - 1], EDGE, BOOT, 'job7', '0x' + 'aa'.repeat(16), aId,
+     reward.toString(), JSON.stringify({ compact_target: '0x19020000' })],
+  );
+  const blockId = blockR.rows[0].id;
+
+  // ── allocate ──────────────────────────────────────────────────────────────
+  const r1 = await allocateMatureBlock(db, { blockId, windowNum: 2, windowDen: 1, feeBps: 100, logger: { log: () => {} } });
+  assert.strictEqual(r1.allocated, true);
+
+  const alloc = (await db.query(`SELECT * FROM block_allocations WHERE block_id = $1`, [blockId])).rows[0];
+  assert.ok(alloc.allocation_hash.length === 64);
+  const items = (await db.query(`SELECT * FROM block_allocation_items WHERE allocation_id = $1`, [alloc.id])).rows;
+  assert.strictEqual(items.length, 2, 'two miner accounts credited');
+  const sum = items.reduce((a, x) => a + BigInt(x.credit_shannons), 0n);
+  const fee = BigInt(alloc.pool_fee_shannons);
+  assert.strictEqual(sum + fee, reward, 'conservation: credits + fee == reward');
+  assert.strictEqual(fee, reward / 100n, '1% fee exactly');
+
+  // ledger state
+  const aCredit = items.find(i => i.miner_id === aId) || items.find(i => String(i.miner_id).replace(/-/g, '') === String(aId).replace(/-/g, ''));
+  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.CONFIRMED])).toString(), aCredit.credit_shannons);
+  assert.ok(await verifyBlockConservation(db, blockId, reward.toString()));
+  assert.strictEqual((await db.query(`SELECT state FROM blocks WHERE id = $1`, [blockId])).rows[0].state, 'SETTLED_TO_LEDGER');
+
+  // ── idempotency: a second attempt is a no-op ──────────────────────────────
+  const r2 = await allocateMatureBlock(db, { blockId, windowNum: 2, windowDen: 1, feeBps: 100, logger: { log: () => {} } });
+  assert.strictEqual(r2.allocated, false, 'cannot allocate twice');
+  const entries = (await db.query(`SELECT count(*)::int c FROM ledger_entries WHERE reference_type='block' AND reference_id=$1`, [blockId])).rows[0].c;
+  assert.strictEqual(entries, 3, '2 miner credits + pool fee, no duplicates');
+
+  // ── orphaned / immature blocks cannot allocate ────────────────────────────
+  const immature = (await db.query(
+    `INSERT INTO blocks (id, candidate_event_id, edge_id, boot_id, job_id, nonce, state, reward_shannons)
+     VALUES ($1,$2,$3,$4,$5,$6,'CANONICAL_IMMATURE',1000) RETURNING id::text`,
+    [uuidv7(), shareIds[0], EDGE, BOOT, 'x', '0x' + 'bb'.repeat(16)],
+  )).rows[0].id;
+  assert.strictEqual((await allocateMatureBlock(db, { blockId: immature, feeBps: 100 })).allocated, false);
+});

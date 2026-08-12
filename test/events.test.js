@@ -208,6 +208,8 @@ test('edge sink: events flow through spool to transport; replay after outage', a
     work_units: '4294967295',
   });
   await sleep(150);
+  const t0p = Date.now();
+  while (t.published.length < 2 && Date.now() - t0p < 5000) await sleep(25);
   assert.deepStrictEqual(t.published.map(x => x.event.edge_seq), [1, 2]);
   // block event goes to its own subject
   assert.ok(t.published.some(x => x.subject === 'pool.v1.edge.test-edge-01.block_submit'));

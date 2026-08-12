@@ -9,7 +9,7 @@
     "session_id", "payout_address", "worker", "job_id", "template_work_id",
     "nonce", "height", "parent_hash", "candidate_block_hash",
     "node_submit_result", "submit_ok", "submit_latency_ms", "submitted_at_ms",
-    "work_units"
+    "work_units", "header"
   ],
   "properties": {
     "schema": { "const": "pool.block.submit.v1" },
@@ -30,7 +30,27 @@
     "submit_ok": { "type": "boolean" },
     "submit_latency_ms": { "type": "integer", "minimum": 0 },
     "submitted_at_ms": { "type": "integer", "minimum": 0 },
-    "work_units": { "type": "string", "pattern": "^[0-9]+$" }
+    "work_units": { "type": "string", "pattern": "^[0-9]+$" },
+    "header": {
+      "type": "object",
+      "description": "RawHeader fields (molecule order) + nonce — self-contained candidate verification (spec 06 §7 auditability).",
+      "required": ["version", "compact_target", "current_time", "number", "epoch",
+                   "parent_hash", "transactions_root", "proposals_hash", "extra_hash", "dao", "nonce"],
+      "properties": {
+        "version": { "type": "string" },
+        "compact_target": { "type": "string" },
+        "current_time": { "type": "string" },
+        "number": { "type": "string" },
+        "epoch": { "type": "string" },
+        "parent_hash": { "type": "string" },
+        "transactions_root": { "type": "string" },
+        "proposals_hash": { "type": "string" },
+        "extra_hash": { "type": "string" },
+        "dao": { "type": "string" },
+        "nonce": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
   },
   "additionalProperties": false
 }

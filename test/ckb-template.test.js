@@ -96,3 +96,17 @@ test('buildBlockForSubmit omits extension when the template has none', () => {
   const built = buildBlockForSubmit(t, '0x0');
   assert.ok(!('extension' in built), 'extension must be absent, not null');
 });
+
+test('block hash = blake2b(full serialized header with nonce) matches real mainnet block', () => {
+  const { ckbBlake2b } = require('../src/mining/blake2b.js');
+  const { serializeFullHeader } = require('../src/mining/ckb-header.js');
+  const block = require('./fixtures/mainnet-multitx-5.json');
+  const H = block.header;
+  const hash = ckbBlake2b(serializeFullHeader({
+    version: H.version, compact_target: H.compact_target, timestamp: H.timestamp,
+    number: H.number, epoch: H.epoch, parent_hash: H.parent_hash,
+    transactions_root: H.transactions_root, proposals_hash: H.proposals_hash,
+    extra_hash: H.extra_hash, dao: H.dao,
+  }, H.nonce)).toString('hex');
+  assert.strictEqual(hash, H.hash.replace(/^0x/, ''), 'header hash formula (canonicality check basis)');
+});

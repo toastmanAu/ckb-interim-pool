@@ -180,6 +180,9 @@ function createEdgeServer({ config, templateService, blockSubmitter, sink, logge
 
   function buildBlockEvent(session, outcome, submitResult, now) {
     const job = outcome.job;
+    // self-contained RawHeader fields for canonical verification (spec 06 §7):
+    // computed from the immutable job template with the proven merkle path.
+    const headerFields = require('../mining/ckb-merkle.js').templateToHeaderFields(job.template);
     return {
       schema: 'pool.block.submit.v1',
       event_id: uuidv7(),
@@ -200,6 +203,19 @@ function createEdgeServer({ config, templateService, blockSubmitter, sink, logge
       submit_latency_ms: submitResult.latencyMs,
       submitted_at_ms: now,
       work_units: outcome.workUnits.toString(),
+      header: {
+        version: headerFields.version,
+        compact_target: headerFields.compact_target,
+        current_time: headerFields.timestamp,
+        number: headerFields.number,
+        epoch: headerFields.epoch,
+        parent_hash: headerFields.parent_hash,
+        transactions_root: headerFields.transactions_root,
+        proposals_hash: headerFields.proposals_hash,
+        extra_hash: headerFields.extra_hash,
+        dao: headerFields.dao,
+        nonce: '0x' + outcome.noncePadded,
+      },
     };
   }
 

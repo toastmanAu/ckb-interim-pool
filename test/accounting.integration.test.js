@@ -85,6 +85,19 @@ function blockEvent(seq, shareEvt, { ok = true } = {}) {
     submit_latency_ms: 7,
     submitted_at_ms: shareEvt.accepted_at_ms + 50,
     work_units: shareEvt.work_units,
+    header: {
+      version: '0x0',
+      compact_target: '0x191b3f4f',
+      current_time: '0x1e1e1e1e',
+      number: '0x1e240',
+      epoch: '0x0',
+      parent_hash: '0x' + '00'.repeat(31) + '01',
+      transactions_root: '0x' + '11'.repeat(32),
+      proposals_hash: '0x' + '22'.repeat(32),
+      extra_hash: '0x' + '33'.repeat(32),
+      dao: '0x' + '44'.repeat(32),
+      nonce: shareEvt.nonce,
+    },
   };
 }
 
