@@ -12,6 +12,7 @@
 const { connect, StringCodec } = require('nats');
 const { createDb } = require('./db.js');
 const { processEvent, seqGaps } = require('./ingest.js');
+const { createBlockService } = require('./block-service.js');
 
 const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
 const NATS_URL = process.env.POOL_NATS_URL || 'nats://127.0.0.1:4223';
@@ -47,6 +48,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
         `pool_ingest_seq_gaps_total ${metrics.gaps}`,
         `pool_ingest_db_errors_total ${metrics.db_errors}`,
         `pool_ingest_events_consumed_total ${metrics.consumed}`,
+        `pool_blocks_allocated_total ${metrics.blocks_allocated_total || 0}`,
+        `pool_blocks_orphaned_total ${metrics.blocks_orphaned_total || 0}`,
+        `pool_ledger_conservation_failures_total ${metrics.ledger_conservation_failures_total || 0}`,
+        `pool_payout_error_batches ${metrics.payout_error_batches || 0}`,
       ];
       res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
       res.end(lines.join('\n') + '\n');
@@ -56,6 +61,25 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   }).listen(METRICS_PORT, '127.0.0.1', () => {
     console.log(`[INGEST] metrics on http://127.0.0.1:${METRICS_PORT}/metrics`);
   });
+
+  // ── block lifecycle service (tracker → allocation → audit) ───────────────
+  const nodeUrl = process.env.POOL_NODE_RPC || 'http://127.0.0.1:8114';
+  const nodeHost = nodeUrl.replace(/^https?:\/\//, '').split(':')[0];
+  const nodePort = parseInt(nodeUrl.split(':').pop() || '8114', 10);
+  const blockService = createBlockService({
+    db,
+    rpcClient: require('../edge/rpc.js').createRpcClient({ host: nodeHost, port: nodePort }),
+    intervalMs: parseInt(process.env.POOL_BLOCK_INTERVAL_MS || '15000', 10),
+    feeBps: parseInt(process.env.POOL_FEE_BPS || '100', 10),
+    windowNum: parseInt(process.env.POOL_PPLNS_WINDOW_NUM || '2', 10),
+    windowDen: parseInt(process.env.POOL_PPLNS_WINDOW_DEN || '1', 10),
+    logger: console,
+    metrics: {
+      inc: (k, n = 1) => { metrics[k] = (metrics[k] || 0) + n; },
+      gauge: (k, v) => { metrics[k] = v; },
+    },
+  });
+  blockService.start();
 
   // durable ordered consumer — retry until the stream exists (edges boot
   // independently; central must not crash during their startup window)

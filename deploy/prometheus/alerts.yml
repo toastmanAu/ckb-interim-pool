@@ -45,6 +45,20 @@ groups:
         labels: { severity: warning }
         annotations: { summary: "ingest alive but no events flowing — edges or bus issue" }
 
+      # ── block lifecycle (exposed by the accounting block-service) ─────────
+      - alert: BlockOrphaned
+        expr: increase(pool_blocks_orphaned_total[1h]) > 0
+        labels: { severity: critical }
+        annotations: { summary: "a found block was orphaned before credit" }
+      - alert: LedgerConservation
+        expr: pool_ledger_conservation_failures_total > 0
+        labels: { severity: critical }
+        annotations: { summary: "ledger conservation failed — STOP payouts until audited" }
+      - alert: PayoutErrorBatch
+        expr: pool_payout_error_batches > 0
+        labels: { severity: critical }
+        annotations: { summary: "a payout batch is in an error state — inspect with poolctl" }
+
   - name: pool-warning
     rules:
       - alert: StaleRateElevated
@@ -63,7 +77,5 @@ groups:
         labels: { severity: warning }
         annotations: { summary: "excessive vardiff churn" }
 
-  # Phase 10 (block-state exporter): 
-  #   - alert: BlockOrphaned          expr: pool_blocks_orphaned_total > 0
-  #   - alert: LedgerConservation     expr: pool_ledger_conservation_failures_total > 0
-  #   - alert: PayoutSigningAnomaly   expr: pool_payout_errors_total > 0
+  # ── pool-warning ───────────────────────────────────────────────────────────
+  # Block-state metrics come from the accounting block-service (/metrics).
