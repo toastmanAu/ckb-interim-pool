@@ -45,5 +45,5 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: node --test --test-force-exit test/accounting.integration.test.js test/api.integration.test.js test/admin.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js
+      - run: npm run test:db
       - run: npm run test:nats
