@@ -1,0 +1,23 @@
+{
+  "name": "wyltek-ckb-interim-pool",
+  "version": "0.1.0",
+  "description": "Interim custodial CKB PPLNS mining pool (pool-edge + central accounting + payout)",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:integration": "node --test test/integration/*.test.js",
+    "lint": "node --check src/edge/edge-server.js",
+    "edge": "node src/edge/edge-server.js",
+    "ingest": "node src/accounting/ingest.js",
+    "api": "node src/api/api-server.js",
+    "payout": "node src/payout/payout-worker.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
