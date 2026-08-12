@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pool
+          POSTGRES_PASSWORD: pooltest
+          POSTGRES_DB: pooltest
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U pool"
+          --health-interval 5s
+          --health-retries 20
+      nats:
+        image: nats:2.10-alpine
+        command: ["-js"]
+        ports: ["4223:4222"]
+    env:
+      POOL_DB_URL: postgres://pool:pooltest@127.0.0.1:5433/pooltest
+      POOL_NATS_URL: nats://127.0.0.1:4223
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node --test --test-force-exit test/accounting.integration.test.js test/api.integration.test.js test/admin.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js
+      - run: npm run test:nats
