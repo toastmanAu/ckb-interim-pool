@@ -5,156 +5,165 @@ built, test/lint commands and results, deviations and blockers.
 
 ## Phase 0 — Reconnaissance and preservation
 
-### Discovered layout
-
 The handoff (`/home/phill/wyltek-pool`) contained only docs + agent prompt.
 The proven mining code lives in `~/ckb-stratum-proxy-upstream` (toastmanAu's
-`ckb-stratum-proxy` @ commit `4d57892`, "docs: pool-passthrough mode design
-spec"), which is a copy of the working repo with tests. `~/community-pool`
-holds the trust-minimized reference architecture (schemata/`pool.mol` etc.)
-— consulted for naming/interfaces only.
+`ckb-stratum-proxy` @ `4d57892`). `~/community-pool` consulted for naming/
+interfaces only. Proven artifacts reused: `src/mining/{blake2b,eaglesong,
+ckb-header,ckb-target,ckb-merkle}.js`, `src/stratum/job-registry.js`,
+mainnet block fixtures. Baseline 44/44 tests pass; after layout move 44/44.
 
-Key proven artifacts reused:
-
-| File | Role |
-|---|---|
-| `src/mining/blake2b.js` | CKB personalization blake2b-256 (self-test vector) |
-| `src/mining/eaglesong.js` | Eaglesong PoW (self-test vector) |
-| `src/mining/ckb-header.js` | raw header serialization + pow_hash |
-| `src/mining/ckb-target.js` | compact→target LE, diff→target LE, meetsTargetLE |
-| `src/mining/ckb-merkle.js` | molecule encode + CBMT roots; verified against real mainnet blocks |
-| `src/stratum/job-registry.js` | bounded job snapshots + evaluateShare/shareDecision |
-| `test/fixtures/mainnet-*.json` | real `get_block_by_number` responses (#19804160, #19804274, proposals, uncle) |
-
-Baseline: upstream `node --test` = 44/44 pass. After layout move: 44/44 pass.
-
-### Environment
-
-- Node v22.22.0; Docker available (postgres/nats will run as containers for
-  integration tests in Phases 3–4).
-- No reachable CKB node on the LAN (checked .80/.91/.102:8114) — live-node
-  verification of RPC fields is **deferred until a node is available**;
-  mainnet block fixtures + upstream-proven field handling stand in.
-- Git initialized; baseline docs committed as `e088b3e`.
-
-### Blockers / notes
-
-- CKB address format verified against RFC 0021 (see Phase 2 §username):
-  HRP `ckb`/`ckt`, payload 0x00 full (bech32m), 0x01 short (bech32),
-  0x02/0x04 deprecated (bech32). RFC 0029 path is a stale link; 0021 is
-  the current RF-0021.
+Environment: Node v22.22.0, Docker available. No reachable CKB node on the
+LAN — live-node verification deferred (mainnet fixtures + upstream-proven
+field handling stand in; see Phase 2 blockers).
 
 ## Phase 1 — Modularize proven mining primitives
 
-### Found and reused
-
-`solo-proxy.js` @ 4d57892 contained the K7/GodMiner + Goldshell protocol
-behavior inline. Extracted **without behavior change** into:
-
-- `src/stratum/miner-family.js` — UA classification, subscribe responses,
-  notify endianness (BE for K7), nonce composition, vardiff wire messages.
-- `src/stratum/vardiff.js` — `checkVardiff` semantics with injectable clock.
-
-### Tests
-
-- Ported all 44 upstream tests into `test/`.
-- New `test/miner-family.test.js` (+20 tests):
-  - K7 subscribe 3-tuple `[null, extranonce1, 8]`; Goldshell nested tuple.
-  - K7 BE target on the wire; LE for others; `leToBe` round-trip.
-  - K7 full nonce = `extranonce1 || n8` (16 bytes); others zero-padded.
-  - vardiff convergence (fast→raise, slow→lower, tolerance, clamps,
-    suggest_difficulty, K7 seed, window reset).
-  - **Differential tests** that transcribe the upstream inline logic and
-    (when `~/ckb-stratum-proxy-upstream` exists) diff against the real
-    upstream modules — 200 randomized vardiff trials + target/endianness/
-    nonce samples. Guards future drift.
-
-### Result
-
-64/64 tests pass (`node --test test/*.test.js`).
-
-### Deviations
-
-None for wire behavior. `buildNotifyFor`/job ids gained a `wireJobId` field
-(see Phase 2) but the raw wire shape is unchanged.
+Extracted (no behavior change) from `solo-proxy.js` @ 4d57892:
+`src/stratum/miner-family.js` (K7/Goldshell wire behavior) and
+`src/stratum/vardiff.js` (injectable clock). Ported all 44 upstream tests;
+added 20 tests incl. **differential tests** against the real upstream module
+(200 randomized vardiff trials, target/endianness/nonce samples). 64/64.
 
 ## Phase 2 — `pool-edge`
 
-### Built
+Built: `src/common/ids.js` (UUIDv7, boot id, wire job ids), `username.js`
+(bech32/bech32m + RFC 0021 CKB address validation; strict worker charset),
+`metrics.js`, `edge/rpc.js`, `edge/template-service.js` (poll + WS push +
+watchdog + health), `edge/share-validator.js` (reason codes),
+`edge/block-submitter.js` (critical-path submit), `edge/edge-server.js`
+(multi-miner: unique per-session extranonce1, duplicate cache, vardiff,
+connection/line/JSON/auth limits, write backpressure, idle timeout, events
+to injectable sink, /health + /metrics), `edge/edge.js` + `main.js`,
+`test/tools/mock-node.js`, `test/tools/mine-share.js`.
 
-- `src/common/ids.js` — UUIDv7, per-boot edge sequence, boot-prefixed wire
-  job ids, per-session extranonce1.
-- `src/stratum/username.js` — bech32/bech32m (BIP-173/350) + RFC 0021 CKB
-  address validation; `CKB_ADDRESS[.WORKER]` parsing with strict worker
-  charset (reject, don't rename) and length caps.
-- `src/common/metrics.js` — counters/gauges + Prometheus text.
-- `src/edge/rpc.js` — CKB JSON-RPC client (upstream timeout/error shape).
-- `src/edge/template-service.js` — polling + new_tip_header WS push +
-  watchdog + node health; immutable job snapshots with wire job ids.
-- `src/edge/share-validator.js` — share evaluation with pool reason codes
-  (LOW_DIFFICULTY / STALE_PREV_TIP / UNKNOWN_JOB / BAD_NONCE_FORMAT / …).
-- `src/edge/block-submitter.js` — immediate local `submit_block`
-  (critical path; never waits on central services).
-- `src/edge/edge-server.js` — multi-miner Stratum server: per-session
-  extranonce1, K7/Goldshell branches, duplicate cache (bounded), vardiff,
-  connection/line/JSON/auth limits, write backpressure, idle timeout,
-  canonical share/block events to an injectable sink, /health + /metrics.
-- `src/edge/edge.js` + `main.js` — composition root and entry point.
-- `test/tools/mock-node.js` — fake CKB node (HTTP RPC + WS) for tests.
-- `test/tools/mine-share.js` — deterministic nonce search for test vectors.
+CKB verification performed:
+- RFC 0021 fetched/verified (payload types, checksums, HRPs `ckb`/`ckt`).
+- `diffToTargetLE` granularity floor: diffs < 1e-6 divide by zero (upstream
+  code untouched) → config rejects `minDiff < 1e-6`.
+- Wire job ids `bootId8 || seq8` (spec 03 §4), registry stays int-keyed.
+- Block submission verified end-to-end vs mock node (nonce/number/work_id
+  + full header reconstruction from real mainnet fixtures).
 
-### Verification performed (CKB-specific)
+8 integration tests over real TCP: K7 subscribe wire shape + unique
+extranonce1; authorize (bad address rejected); accepted share event payload
+(integer work_units, canonical q-strings, nonce composition, hash recompute);
+duplicate/low-diff/unknown/stale classification; Goldshell nested subscribe +
+5-field submit; **block discovery → immediate local submit_block → clean
+notify → correlated block event**; suggest_difficulty; health/metrics.
 
-- RFC 0021 fetched and verified: payload types, checksum variants,
-  HRPs `ckb`/`ckt`, no length limit (we still cap at 256 chars).
-- `diffToTargetLE` granularity floor found: diffs < 1e-6 round to zero and
-  divide by zero (proven upstream code, **not modified**). Config loader now
-  rejects `minDiff < 1e-6`.
-- Job ids: wire ids are `bootId8 || seq8` (globally distinguishable across
-  restarts per spec 03 §4); registry stays int-keyed (proven module
-  untouched); resolution parses the trailing 8 hex chars.
-- Block submission path verified end-to-end against the mock node: the
-  submitted block's `header.nonce`, `number`, `work_id` and full header
-  reconstruction (real mainnet fixtures) match.
+Bugs found & fixed: missing `mining.authorize` response; extranonce1
+captured at subscribe instead of connection time; mock template rotation;
+WS zombie reconnect after shutdown; vectors must be mined against the exact
+session `extranonce1` and template (parent_hash changes pow_hash).
 
-### Tests
+86/86 tests; 3 clean consecutive runs.
 
-`test/edge.integration.test.js` (+8 tests, real TCP): K7 subscribe wire
-shape + unique extranonce1 per session; authorize (bad address rejected /
-good accepted); accepted share with full event payload (work_units integer,
-canonical q-strings, nonce composition, hash recomputation); duplicate
-reject; low-diff reject; unknown-job ack; Goldshell nested subscribe +
-5-field submit; block discovery → immediate local submit_block → clean
-notify after find → block event correlation; stale share acked-but-not-
-credited; suggest_difficulty; health/metrics endpoints.
+Deviations (documented): per-session extranonce1 for K7 (upstream used a
+fixed prefix — nonce-space collision between two K7s in a pool);
+`clean_jobs=true` on parent change per spec 03 §5.4 (upstream always false);
+job ids boot-prefixed per spec 03 §4.
 
-Deterministic vectors: share `n8=…0704` (powHash `3b9780…`), block
-`n8=…009b` (powHash `af5752…`, easy target template) — mined offline,
-verified at generation and asserted in tests.
+Blockers: live CKB node unavailable; real K7 soak pending (ops).
 
-### Bugs found and fixed during implementation
+## Phase 3 — Durable event pipeline
 
-1. `mining.authorize` response was never sent (upstream sends
-   `{id, result:true}`) — miner would hang after auth.
-2. Per-session extranonce1 used a shared counter captured at subscribe-time
-   instead of connection-time (nonce-space collision between two K7s).
-3. Mock node never rotated templates on `pushNewTip`.
-4. WS reconnect could zombie-loop after shutdown (stopped flag added).
-5. Vectors must be mined against the exact session `extranonce1` (K7
-   nonce = en1 || n8) and the exact template (parent_hash changes pow_hash).
+- `schemas/*.schema.json` (JSON Schema 2020-12, checked in; additive
+  Community Pool batch/signature fields reserved).
+- `src/events/validate.js` (Ajv against checked-in schemas),
+  `spool.js` (append-only WAL, per-record crc32, multi-boot replay, max-bytes
+  fail-closed, batched fsync documented), `publisher.js` (edge-seq ordered,
+  at-least-once, backoff on transport failure, invalid-event drop with log),
+  `edge-sink.js` (spool+publisher; throws → edge fails closed),
+  `nats-transport.js` (JetStream workqueue stream, msgID dedup, per-edge
+  subjects), `file-transport.js` (test/single-host fallback).
+- Phase 3 gate (test/nats-pipeline.test.js, real NATS 2.10 in docker):
+  mining with bus up → `docker stop` → shares keep flowing into the spool →
+  `docker start` → new boot replays the old segment → **every event seen
+  exactly once** (JetStream workqueue dedup + DB constraints).
 
-### Result
+Known library quirk: nats.js leaves TCP sockets lingering after `close()`;
+the NATS suite runs with `--test-force-exit` (separate npm script).
 
-86/86 tests pass; 3 consecutive full-suite runs exit cleanly.
+## Phase 4 — PostgreSQL + ingestion
 
-### Blockers
+- `db/migrations/001-init.sql` — full spec-05 schema (numeric(39,0) money,
+  numeric(78,0) work, unique constraints at every replay boundary, indexes).
+  `002-block-verification.sql` — `template_json`, `block_epoch_json`.
+- `src/accounting/db.js` (migration runner), `ingest.js` (idempotent
+  processEvent: ingested_events registry gate → edge/boot/miner/worker/
+  session upserts → share rows → block candidate/submit correlation;
+  seq-gap advisory detection), `accounting/main.js` (JetStream durable
+  consumer, ack/nak with requeue).
+- Gate (test/accounting.integration.test.js): events through NATS +
+  PostgreSQL, **replayed twice → row counts and monetary work unchanged**;
+  invalid events write nothing; candidate-share linking works in either
+  arrival order.
 
-- No live CKB node available on the LAN to confirm `get_block_template`
-  field behavior against a real node; all behavior pinned via real mainnet
-  block fixtures (byte-for-byte header reconstruction) + upstream-proven
-  field handling. Re-verify against a live node before mainnet (gate G2).
-- Real K7 hardware soak still required (ops phase).
+## Phase 5 — Deterministic PPLNS
 
-## Phase 3 — Durable event pipeline (IN PROGRESS)
+- `src/pplns/work-units.js` — canonical integer work: `(2^256−1)/target`.
+- `src/pplns/pplns.js` — pure `allocateBlock()`: fee bps, backward window
+  (boundary-crossing share included), floor + largest-remainder with
+  deterministic tie-break, conservation assertion, allocation hash.
+- Golden vectors (spec 08 §7): `test/vectors/pplns-golden.json` — 10 vectors
+  (one/two/unequal miners, vardiff, exact boundary, crossing share, huge
+  work, fee floor, remainder tie, W-change); generator
+  `test/tools/gen-pplns-vectors.js`; the suite asserts regeneration is
+  byte-identical. 19 tests incl. 300-trial conservation property test.
 
-(notes appended as implemented)
+## Phase 6 — Block lifecycle and reward crediting
+
+- `src/accounting/block-tracker.js` — canonicality via
+  `get_block_by_number(height)` vs candidate hash (formula pinned
+  byte-for-byte against a real mainnet block), ORPHANED on mismatch, reward
+  = Σ cellbase outputs (chain data, never a constant), maturity at
+  tip-epoch ≥ found-epoch + 4 (CELLBASE_MATURITY verified against CKB
+  source `spec/src/consensus.rs`).
+- `src/accounting/ledger.js` — immutable entries, idempotency keys, derived
+  balances, conservation check.
+- `src/accounting/allocator.js` — MATURE→ALLOCATED guard (single-writer),
+  config snapshot, allocation + items + ledger in one transaction,
+  →SETTLED_TO_LEDGER. Tests: conservation, double-allocate no-op, immature
+  blocks cannot allocate, orphan detection, reward extraction.
+
+## Phase 7 — Payout worker
+
+- `src/payout/payout-worker.js` — advisory lock, eligibility = confirmed
+  balance ≥ floor (net of reservations — bug found where the `> 0` filter
+  excluded debits), transactional reservation (CONFIRMED→PENDING_PAYOUT),
+  per-miner build/broadcast via TxBuilder, PAID posting, confirmation
+  polling, crash recovery (checks on-chain tx before re-sending).
+- `src/payout/tx-builder.js` — DryRunBuilder (deterministic, offline) +
+  CkbCliBuilder (`ckb-cli wallet transfer`, one recipient per tx — verified
+  against ckb-cli source; batch is logical).
+- `src/accounting/poolctl.js` — operator CLI (block show/recompute,
+  miner balance, ledger verify, payout dry-run/inspect, events status).
+- Tests: double-reservation impossible, no double-pay after simulated
+  crash, confirmation state machine.
+
+## Phase 8 — Public API + dashboard
+
+- `src/api/api-server.js` — read-only /api/v1 (pool, network, edges, blocks,
+  miners/:address [+workers/shares/payouts], policy), /health, /ready;
+  no IPs/session/internal metadata exposed.
+- `src/api/dashboard.html` — dependency-free responsive dashboard with the
+  custodial-model disclaimer (spec 08 §8, 09 Phase 8 task 8).
+- Test: pool/miner/policy endpoints against seeded PostgreSQL.
+
+## Test status (2026-08-12)
+
+| Suite | Command | Result |
+|---|---|---|
+| unit (mining/stratum/events/edge/pplns/username) | `npm test` | 99/99 |
+| NATS pipeline gate | `npm run test:nats` (needs `deploy/nats-test.sh`) | 1/1 |
+| DB integration (ingest/tracker/allocator/payout/api) | `node --test --test-force-exit test/*.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js` (needs `deploy/pg-test.sh`) | 5/5 |
+
+## Remaining gates (not done in this session — ops/deployment)
+
+- Live CKB node verification of `get_block_template`/`get_block_by_number`/
+  `submit_block` field behavior (mock node + mainnet fixtures stand in).
+- Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.
+- Real testnet block-to-payout lifecycle; payout dry-run vs real wallet.
+- Multi-region drills (two edges, central outage, spool replay together).
+- 24h+ soak, restore/replay drills, secrets isolation, alerts, runbook
+  (spec 07 §11 launch gates).

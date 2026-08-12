@@ -206,6 +206,13 @@ test('edge sink: events flow through spool to transport; replay after outage', a
     submit_latency_ms: 5,
     submitted_at_ms: 1700000000000,
     work_units: '4294967295',
+    header: {
+      version: '0x0', compact_target: '0x191b3f4f', current_time: '0x1e1e1e1e',
+      number: '0x64', epoch: '0x0', parent_hash: '0x' + '00'.repeat(31) + '01',
+      transactions_root: '0x' + '11'.repeat(32), proposals_hash: '0x' + '22'.repeat(32),
+      extra_hash: '0x' + '33'.repeat(32), dao: '0x' + '44'.repeat(32),
+      nonce: '0x' + '11'.repeat(16),
+    },
   });
   await sleep(150);
   const t0p = Date.now();

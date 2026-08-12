@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: pool
+      POSTGRES_PASSWORD: ${POOL_DB_PASSWORD:?set POOL_DB_PASSWORD}
+      POSTGRES_DB: pooltest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pool"]
+      interval: 5s
+      retries: 20
+    networks: [central]
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js"]
+    volumes:
+      - natsdata:/data
+    networks: [central]
+
+  accounting:
+    build: .
+    command: node src/accounting/main.js
+    environment:
+      POOL_DB_URL: postgres://pool:${POOL_DB_PASSWORD}@postgres:5432/pooltest
+      POOL_NATS_URL: nats://nats:4222
+      POOL_STREAM: POOL_V1
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats: { condition: service_started }
+    networks: [central]
+
+  api:
+    build: .
+    command: node src/api/api-server.js
+    environment:
+      POOL_DB_URL: postgres://pool:${POOL_DB_PASSWORD}@postgres:5432/pooltest
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [central]
+
+  # Edge regions: pool-edge + local CKB node (node image/sidecar is ops-defined).
+  # Example region edge (points at a local CKB node on the same host/LAN):
+  # edge-au:
+  #   build: .
+  #   command: node src/edge/main.js
+  #   environment:
+  #     POOL_CONFIG: /cfg/edge.json
+  #   volumes: [./deploy/edges/au.json:/cfg/edge.json:ro, edge-spool-au:/spool]
+  #   ports: ["3333:3333"]
+
+volumes:
+  pgdata:
+  natsdata:
+
+networks:
+  central:
