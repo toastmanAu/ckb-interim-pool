@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pool.share.accepted.v1",
+  "title": "Accepted share event (spec 03 §10)",
+  "description": "Emitted by a pool-edge for every accepted share. The canonical accounting record; also the future Community Pool accepted-share semantic record (batch/signature fields intentionally absent but additive-friendly).",
+  "type": "object",
+  "required": [
+    "schema", "event_id", "edge_id", "edge_boot_id", "edge_seq",
+    "session_id", "payout_address", "worker", "job_id", "template_work_id",
+    "work_units", "share_difficulty", "share_difficulty_q",
+    "network_difficulty_q", "pow_hash", "nonce", "hash",
+    "header_hash_or_header_ref", "accepted_at_ms", "is_block_candidate"
+  ],
+  "properties": {
+    "schema": { "const": "pool.share.accepted.v1" },
+    "event_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "edge_id": { "type": "string", "maxLength": 64 },
+    "edge_boot_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "edge_seq": { "type": "integer", "minimum": 1 },
+    "session_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "payout_address": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "worker": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "job_id": { "type": "string", "maxLength": 64 },
+    "template_work_id": { "type": "string", "maxLength": 64 },
+    "work_units": { "type": "string", "pattern": "^[0-9]+$" },
+    "share_difficulty": { "type": "string" },
+    "share_difficulty_q": { "type": "string", "pattern": "^[0-9]+/[0-9]+$" },
+    "network_difficulty_q": { "type": "string", "pattern": "^[0-9]+/[0-9]+$" },
+    "pow_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "nonce": { "type": "string", "pattern": "^0x[0-9a-f]{32}$" },
+    "hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+    "header_hash_or_header_ref": { "type": "string", "maxLength": 70 },
+    "accepted_at_ms": { "type": "integer", "minimum": 0 },
+    "is_block_candidate": { "type": "boolean" },
+    "batch_id": { "type": ["string", "null"] },
+    "batch_seq": { "type": ["integer", "null"] },
+    "operator_pubkey": { "type": ["string", "null"] },
+    "batch_signature": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

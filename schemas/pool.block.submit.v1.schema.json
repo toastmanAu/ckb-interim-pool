@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "pool.block.submit.v1",
+  "title": "Block candidate / submission result event (spec 03 §12)",
+  "description": "Emitted by a pool-edge for every network-target solution and its local node submission result. The central service correlates it with the winning share event via (job_id, nonce).",
+  "type": "object",
+  "required": [
+    "schema", "event_id", "edge_id", "edge_boot_id", "edge_seq",
+    "session_id", "payout_address", "worker", "job_id", "template_work_id",
+    "nonce", "height", "parent_hash", "candidate_block_hash",
+    "node_submit_result", "submit_ok", "submit_latency_ms", "submitted_at_ms",
+    "work_units"
+  ],
+  "properties": {
+    "schema": { "const": "pool.block.submit.v1" },
+    "event_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "edge_id": { "type": "string", "maxLength": 64 },
+    "edge_boot_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "edge_seq": { "type": "integer", "minimum": 1 },
+    "session_id": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+    "payout_address": { "type": "string", "minLength": 1, "maxLength": 256 },
+    "worker": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "job_id": { "type": "string", "maxLength": 64 },
+    "template_work_id": { "type": "string", "maxLength": 64 },
+    "nonce": { "type": "string", "pattern": "^0x[0-9a-f]{32}$" },
+    "height": { "type": "integer", "minimum": 0 },
+    "parent_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
+    "candidate_block_hash": { "type": ["string", "null"] },
+    "node_submit_result": { "type": "string", "maxLength": 256 },
+    "submit_ok": { "type": "boolean" },
+    "submit_latency_ms": { "type": "integer", "minimum": 0 },
+    "submitted_at_ms": { "type": "integer", "minimum": 0 },
+    "work_units": { "type": "string", "pattern": "^[0-9]+$" }
+  },
+  "additionalProperties": false
+}

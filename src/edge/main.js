@@ -19,12 +19,20 @@ require('../mining/eaglesong.js').selftest();
 async function buildSink(config) {
   switch (config.events.bus) {
     case 'nats': {
-      const { createNatsSink } = require('../events/nats-sink.js');
-      return createNatsSink(config);
+      const { createNatsTransport } = require('../events/nats-transport.js');
+      const { createEdgeSink } = require('../events/edge-sink.js');
+      const transport = await createNatsTransport(config.events.nats).start();
+      const sink = createEdgeSink({ config, transport });
+      await sink.replay();
+      return sink;
     }
     case 'file': {
-      const { createFileSink } = require('../events/file-sink.js');
-      return createFileSink(config);
+      const { createFileTransport } = require('../events/file-transport.js');
+      const { createEdgeSink } = require('../events/edge-sink.js');
+      const transport = await createFileTransport(config.events.file).start();
+      const sink = createEdgeSink({ config, transport });
+      await sink.replay();
+      return sink;
     }
     case 'none':
     default:
