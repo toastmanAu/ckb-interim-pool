@@ -1,3 +1,11 @@
 k7-session-logs/
 spool-k7-test/
 soak-out/
+# secrets / local material — never commit
+deploy/nats-tls/
+*.key
+*.pem
+*.p12
+.env
+config.json
+pool-key*
