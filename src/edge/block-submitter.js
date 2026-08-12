@@ -14,6 +14,19 @@
 
 const merkle = require('../mining/ckb-merkle.js');
 
+/**
+ * Minimal hex form required by the node's Uint128 JSON parser
+ * (ckb util/jsonrpc-types/src/uints.rs: any leading zero nibble after 0x is
+ * rejected as "redundant leading zeros"). Value-preserving: the serialized
+ * header bytes (writeU128 LE) are identical.
+ * Verified live (2026-08-12, node at .105): ~8.5% of recent mainnet blocks
+ * carry a minimal-form nonce — the upstream zero-padded form would be
+ * rejected for those.
+ */
+function minimalNonceHex(noncePadded) {
+  return '0x' + BigInt('0x' + noncePadded.replace(/^0x/, '')).toString(16);
+}
+
 function createBlockSubmitter({ rpcClient, logger = console }) {
   /**
    * @param {string} noncePadded  full 32-hex-char nonce (no 0x)
@@ -21,7 +34,7 @@ function createBlockSubmitter({ rpcClient, logger = console }) {
    * @returns {Promise<{ok:boolean, error?:string, latencyMs:number}>}
    */
   async function submitBlock(noncePadded, template) {
-    const nonceHex = '0x' + noncePadded.padStart(32, '0');
+    const nonceHex = minimalNonceHex(noncePadded);
     const block = merkle.buildBlockForSubmit(template, nonceHex);
     const t0 = Date.now();
     try {
@@ -39,4 +52,4 @@ function createBlockSubmitter({ rpcClient, logger = console }) {
   return { submitBlock };
 }
 
-module.exports = { createBlockSubmitter };
+module.exports = { createBlockSubmitter, minimalNonceHex };

@@ -406,3 +406,19 @@ test('two K7 sessions keep distinct extranonce1 (nonce space separation)', async
   const r2 = await m2.waitFor(m => m.id === 2);
   assert.notStrictEqual(r1.result[1], r2.result[1]);
 });
+
+test('block submitter: nonce sent in node-accepted minimal hex form (live-node finding)', () => {
+  const { minimalNonceHex } = require('../src/edge/block-submitter.js');
+  assert.strictEqual(minimalNonceHex('00000000000000000000000000000001'), '0x1');
+  assert.strictEqual(minimalNonceHex('00000000000000000000000000001234'), '0x1234');
+  assert.strictEqual(minimalNonceHex('aabbccdd0000000100000000000009b0'), '0xaabbccdd0000000100000000000009b0');
+  assert.strictEqual(minimalNonceHex('00000000000000000000000000000000'), '0x0');
+  // value preservation: header bytes unchanged
+  const { serializeFullHeader } = require('../src/mining/ckb-header.js');
+  const f = { version: '0x0', compact_target: '0x191b3f4f', timestamp: '0x1', number: '0x1', epoch: '0x1',
+              parent_hash: '0x' + '00'.repeat(32), transactions_root: '0x' + '11'.repeat(32),
+              proposals_hash: '0x' + '22'.repeat(32), extra_hash: '0x' + '33'.repeat(32), dao: '0x' + '44'.repeat(32) };
+  const a = serializeFullHeader(f, '0x00000000000000000000000000001234');
+  const b = serializeFullHeader(f, '0x1234');
+  assert.deepStrictEqual(a, b, 'minimal form serializes to identical header bytes');
+});

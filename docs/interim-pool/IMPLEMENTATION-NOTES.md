@@ -158,10 +158,39 @@ the NATS suite runs with `--test-force-exit` (separate npm script).
 | NATS pipeline gate | `npm run test:nats` (needs `deploy/nats-test.sh`) | 1/1 |
 | DB integration (ingest/tracker/allocator/payout/api) | `node --test --test-force-exit test/*.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js` (needs `deploy/pg-test.sh`) | 5/5 |
 
+## Live-node verification (2026-08-12, mainnet node at 192.168.68.105:8114)
+
+Performed against the operator's live mainnet node; all consensus-sensitive
+assumptions now confirmed on-chain (previously fixture-only):
+
+1. `get_block_template` field shape matches the edge exactly (work_id,
+   number, compact_target, current_time, epoch, parent_hash, dao, cellbase,
+   transactions, proposals, uncles, extension); live reward at the time:
+   61,833,531,560 shannons ≈ 618.34 CKB from the template cellbase.
+2. Merkle roots + header serialization verified live: for a real block at
+   height 20,134,759, `templateToHeaderFields` reproduces
+   transactions_root/proposals_hash/extra_hash exactly, and the full header
+   hash formula reproduces the on-chain block hash exactly.
+3. WS `new_tip_header` subscription works against the live node (28114):
+   a new-tip push → new job with clean=true arrived within one block (~8s).
+4. Epoch parse (RFC 0021 layout) consistent with live tip (number/index/
+   length all in range; length ≈ 1630, sane for mainnet).
+5. **Bug found and fixed (live node): `submit_block` nonce encoding.**
+   The node's Uint128 JSON parser (util/jsonrpc-types/src/uints.rs) rejects
+   any leading zero nibble after `0x` ("redundant leading zeros"). The
+   proven upstream proxy zero-pads the nonce to 32 hex chars —
+   ~8.5% of real mainnet blocks (34/400 sampled) have a shorter minimal
+   nonce and would have been rejected. `block-submitter.js` now converts to
+   minimal hex (`0x` + BigInt(nonce).toString(16)) before submission —
+   value-preserving (identical serialized header bytes, pinned by test).
+
 ## Remaining gates (not done in this session — ops/deployment)
 
-- Live CKB node verification of `get_block_template`/`get_block_by_number`/
-  `submit_block` field behavior (mock node + mainnet fixtures stand in).
+- Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.
+- Real testnet block-to-payout lifecycle; payout dry-run vs real wallet.
+- Multi-region drills (two edges, central outage, spool replay together).
+- 24h+ soak, restore/replay drills, secrets isolation, alerts, runbook
+  (spec 07 §11 launch gates).
 - Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.
 - Real testnet block-to-payout lifecycle; payout dry-run vs real wallet.
 - Multi-region drills (two edges, central outage, spool replay together).
