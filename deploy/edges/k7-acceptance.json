@@ -1,0 +1,47 @@
+{
+  "edge": {
+    "id": "au-k7-test-01",
+    "region": "au",
+    "name": "K7 acceptance edge",
+    "stratumHost": "0.0.0.0",
+    "stratumPort": 3333,
+    "statsHost": "127.0.0.1",
+    "statsPort": 8082,
+    "network": "ckb"
+  },
+  "node": {
+    "host": "192.168.68.105",
+    "port": 8114,
+    "wsPort": 28114,
+    "pollMs": 250,
+    "timeoutMs": 8000
+  },
+  "vardiff": {
+    "targetShareSec": 30,
+    "retargetSec": 60,
+    "variancePercent": 30,
+    "minDiff": 1,
+    "maxDiff": 1000000000,
+    "initialDiff": 1,
+    "godminerInitialDiff": 65536
+  },
+  "limits": {
+    "maxConnectionsPerIp": 8,
+    "maxConnectionsTotal": 64,
+    "idleTimeoutMs": 300000,
+    "maxLineBytes": 65536,
+    "jsonErrorBudget": 10,
+    "maxAuthAttempts": 20,
+    "maxPendingWriteBytes": 1048576
+  },
+  "spool": {
+    "dir": "spool-k7-test",
+    "maxBytes": 1073741824,
+    "syncIntervalMs": 1000,
+    "highWaterBytes": 805306368
+  },
+  "events": {
+    "bus": "file",
+    "file": { "dir": "spool-k7-test/export" }
+  }
+}
