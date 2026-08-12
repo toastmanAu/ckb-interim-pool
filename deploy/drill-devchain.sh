@@ -14,13 +14,9 @@ STREAM="POOL_V1_DEV"
 DEV_RPC="${DEV_RPC:-http://127.0.0.1:8115}"
 ADDR="ckt1qyqdcy57049wv82wjwca8a236c8hgxvp6n7s6gdcsj"   # pool key (dev chain)
 MINING_SECS="${MINING_SECS:-90}"
+[ $# -ge 1 ] && MINING_SECS="$1"
 
 deploy/nats-test.sh >/dev/null; deploy/pg-test.sh >/dev/null
-node -e "
-const { Pool } = require('pg');
-(async () => { const p = new Pool({ connectionString: '$POOL_DB_URL' });
-  await p.query('TRUNCATE ledger_entries, block_allocations, block_allocation_items, payout_batches, payout_items, share_events, blocks, ingested_events, sessions, workers, miners, edges, edge_boots, config_snapshots CASCADE'); await p.end(); })();
-"
 node -e "
 const { connect } = require('nats');
 (async () => { const nc = await connect({ servers: '$POOL_NATS_URL' });
@@ -48,10 +44,18 @@ EOF
 echo "── dev-chain drill ──────────────────────────────"
 POOL_CONFIG=/tmp/opencode/dev-edge.json node src/edge/main.js > /tmp/opencode/dev-edge.log 2>&1 & E=$!
 POOL_DB_URL="$POOL_DB_URL" POOL_NATS_URL="$POOL_NATS_URL" POOL_STREAM="$STREAM" \
-  POOL_NODE_RPC="$DEV_RPC" POOL_BLOCK_INTERVAL_MS=2000 \
+  POOL_NODE_RPC="$DEV_RPC" POOL_BLOCK_INTERVAL_MS=2000 POOL_MATURITY_EPOCHS=0 \
   node src/accounting/main.js > /tmp/opencode/dev-ingest.log 2>&1 & INGEST=$!
 trap 'kill $E $INGEST 2>/dev/null' EXIT
 sleep 4
+
+echo "0) flushing the dev mempool (mine ~8s so prior payout txs commit)…"
+timeout 8 node test/tools/miner-sim.js "127.0.0.1:3338" "$ADDR.flush" >/dev/null 2>&1 || true
+node -e "
+const { Pool } = require('pg');
+(async () => { const p = new Pool({ connectionString: '$POOL_DB_URL' });
+  await p.query('TRUNCATE ledger_entries, block_allocations, block_allocation_items, payout_batches, payout_items, share_events, blocks, ingested_events, sessions, workers, miners, edges, edge_boots, config_snapshots CASCADE'); await p.end(); })();
+"
 
 echo "1) mining dev chain ${MINING_SECS}s (every share ≈ a block)…"
 timeout "$MINING_SECS" node test/tools/miner-sim.js "127.0.0.1:3338" "$ADDR.dev-01" >/dev/null 2>&1 || true
@@ -76,18 +80,8 @@ const { Pool } = require('pg');
 })();
 "
 
-echo "3) payout dry-run + real signed transaction…"
-POOL_DB_URL="$POOL_DB_URL" POOL_PAYOUT_DRY_RUN=1 node src/payout/main.js 2>&1 | tail -1
-node -e "
-const { buildAndSendPayout } = require('./src/payout/ckb-tx-builder.js');
-const key = require('/tmp/opencode/pool-key.json');
-(async () => {
-  const r = await buildAndSendPayout({
-    rpcUrl: '$DEV_RPC',
-    privateKey: Buffer.from(key.priv, 'hex'),
-    toAddresses: [{ address: '$ADDR', capacityShannons: null }],   // null = sweep remainder minus fee
-    feeRateShannons: 1000,
-  });
-  console.log(JSON.stringify(r, null, 2));
-})();
-"
+echo "3) real payout batch — worker + in-process CKB builder (one signed tx)…"
+node -e 'require("fs").writeFileSync("/tmp/opencode/pool-key.hex", require("/tmp/opencode/pool-key.json").priv + "\n")'
+POOL_DB_URL="$POOL_DB_URL" POOL_PAYOUT_BUILDER=ckb POOL_PAYOUT_KEY=/tmp/opencode/pool-key.hex \
+  POOL_NODE_RPC="$DEV_RPC" POOL_MIN_PAYOUT_SHANNONS=100000000000 \
+  node src/payout/main.js 2>&1 | tail -3

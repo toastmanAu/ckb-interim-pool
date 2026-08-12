@@ -274,10 +274,26 @@ without the dev node).
 
 ## Remaining gates (not done in this session — ops/deployment)
 
-- Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.
-- Mainnet verification of the tx builder: cell collection should move to
-  the ckb-indexer `get_cells` RPC at production scale (the cellbase-scan is
-  correct but O(tip) per payout).
+- Real K7/GodMiner + Goldshell hardware soak (10:00–13:00 window tomorrow);
+  NerdMiner low-diff path.
+- **ckb-indexer cell collection**: `collectPoolCells` now uses the
+  ckb-indexer `get_cells` RPC when `POOL_INDEXER_URL` is set (paginated,
+  live cells only); the block-scan fallback gained (a) chunked scanning
+  until the required capacity is covered and (b) a spent-outpoint filter
+  (skips cellbases already consumed by committed payout txs — found when a
+  rerun tried to spend flushed cells).
+- **Payout batching**: the worker now builds ONE signed transaction per
+  batch via `buildBatchTransfer` when the builder supports it
+  (`POOL_PAYOUT_BUILDER=ckb` → `ckb-in-process.js` wraps the
+  self-contained builder; the batch amount determined the required scan
+  window — an overflow bug when the batch exceeded the 200-block window
+  was caught and fixed).
+- **Stuck-batch recovery**: `runOnce` resumes RESERVED batches left by a
+  crash between create and process (spec 04 §12 crash window).
+- `POOL_MATURITY_EPOCHS` env for the block-service (dev chain uses 0).
+- The dev drill now flushes the mempool first (mines ~8s) so reruns never
+  double-spend pending cells; `test/payout-tx.test.js` mines blocks
+  directly (Dummy PoW) for the same purpose — passes repeatedly.
 - Real multi-host region deployment (drills pass locally; two hosts +
   firewall/NTP verification on real hosts).
 - Block-state exporter for the orphan/conservation/payout alerts (Phase 10).
@@ -285,7 +301,8 @@ without the dev node).
 - Multi-region drills (two edges, central outage, spool replay together).
 - 24h+ soak, restore/replay drills, secrets isolation, alerts, runbook
   (spec 07 §11 launch gates).
-- Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.
+- Real K7/GodMiner + Goldshell hardware soak (10:00–13:00 window tomorrow);
+  NerdMiner low-diff path.
 - Real testnet block-to-payout lifecycle; payout dry-run vs real wallet.
 - Multi-region drills (two edges, central outage, spool replay together).
 - 24h+ soak, restore/replay drills, secrets isolation, alerts, runbook

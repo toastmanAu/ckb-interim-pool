@@ -84,7 +84,8 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
     }
   }
 
-  /** Build + broadcast one tx per item; advance the batch state machine. */
+  /** Build + broadcast one tx per item (or ONE batch tx when the builder
+   *  supports it), then advance the batch state machine. */
   async function processBatch(batchId) {
     const { rows } = await db.query(
       `SELECT i.id, i.miner_id, i.amount_shannons, m.payout_address
@@ -93,15 +94,42 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
       [batchId],
     );
     if (rows.length === 0) throw new Error(`batch ${batchId}: no items`);
-
+    const reservable = [];
     for (const item of rows) {
       const state = (await db.query(`SELECT state FROM payout_items WHERE id = $1`, [item.id])).rows[0].state;
-      if (state !== 'RESERVED') continue;   // already broadcast/paid — never resend
-      const built = await txBuilder.buildTransfer({
-        toAddress: item.payout_address,
-        capacityShannons: item.amount_shannons,
+      if (state === 'RESERVED') reservable.push(item);
+    }
+    if (reservable.length === 0) return;
+
+    let batchResult = null;
+    if (typeof txBuilder.buildBatchTransfer === 'function') {
+      // one signed transaction for the whole batch (spec 04 §11 batching)
+      batchResult = await txBuilder.buildBatchTransfer({
+        items: reservable.map(i => ({ address: i.payout_address, capacityShannons: i.amount_shannons })),
       });
-      const broadcast = await built.broadcast();
+      const broadcast = await batchResult.broadcast();
+      await postEntriesForBatch(batchId, reservable, broadcast.txHash);
+      logger.log('PAYOUT', `batch ${batchId.slice(0, 8)} → ${reservable.length} recipients in ONE tx ${broadcast.txHash}`);
+    } else {
+      for (const item of reservable) {
+        const built = await txBuilder.buildTransfer({
+          toAddress: item.payout_address,
+          capacityShannons: item.amount_shannons,
+        });
+        const broadcast = await built.broadcast();
+        await postEntriesForBatch(batchId, [item], broadcast.txHash);
+        logger.log('PAYOUT', `batch ${batchId.slice(0, 8)} → ${item.payout_address.slice(0, 12)}… ${item.amount_shannons} shannons tx=${broadcast.txHash}`);
+      }
+    }
+    await db.query(
+      `UPDATE payout_batches SET state = 'BROADCAST', broadcast_at = now(), tx_hash = $2 WHERE id = $1 AND state = 'RESERVED'`,
+      [batchId, batchResult ? null : null],
+    );
+  }
+
+  /** Mark items BROADCAST + post the PAID ledger transitions (idempotent). */
+  async function postEntriesForBatch(batchId, items, txHash) {
+    for (const item of items) {
       await db.query(
         `UPDATE payout_items SET state = 'BROADCAST' WHERE id = $1 AND state = 'RESERVED'`,
         [item.id],
@@ -113,7 +141,7 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
         referenceType: 'payout',
         referenceId: batchId,
         idempotencyKey: `payout:paid:${batchId}:${item.miner_id}`,
-        metadata: { txHash: broadcast.txHash },
+        metadata: { txHash },
       });
       await postEntry(db, {
         accountType: ACCOUNTS.PENDING_PAYOUT,
@@ -123,12 +151,7 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
         referenceId: batchId,
         idempotencyKey: `payout:paid:${batchId}:${item.miner_id}:pending`,
       });
-      logger.log('PAYOUT', `batch ${batchId.slice(0, 8)} → ${item.payout_address.slice(0, 12)}… ${item.amount_shannons} shannons tx=${broadcast.txHash}`);
     }
-    await db.query(
-      `UPDATE payout_batches SET state = 'BROADCAST', broadcast_at = now(), tx_hash = $2 WHERE id = $1 AND state = 'RESERVED'`,
-      [batchId, rows[0] ? null : null],
-    );
   }
 
   /** Confirm broadcast txs on the node (poll get_transaction until committed). */
@@ -197,6 +220,13 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
     const [acquired] = (await db.query('SELECT pg_try_advisory_lock(727_001) AS ok')).rows;
     if (!acquired.ok) { logger.log('PAYOUT', 'another worker holds the lock'); return null; }
     try {
+      // resume any RESERVED batch stuck between create and process
+      // (crash recovery — spec 04 §12)
+      const stuck = await db.query(`SELECT id FROM payout_batches WHERE state = 'RESERVED'`);
+      for (const b of stuck.rows) {
+        logger.log('PAYOUT', `resuming stuck batch ${String(b.id).slice(0, 8)}`);
+        await processBatch(b.id);
+      }
       const miners = await eligibleMiners();
       if (miners.length === 0) return null;
       const batch = await createBatch(miners);

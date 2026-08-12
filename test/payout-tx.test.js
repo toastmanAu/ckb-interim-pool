@@ -9,9 +9,33 @@ const assert = require('node:assert');
 const { execSync } = require('node:child_process');
 
 const { buildAndSendPayout } = require('../src/payout/ckb-tx-builder.js');
+const merkle = require('../src/mining/ckb-merkle.js');
 
 const DEV_RPC = process.env.DEV_RPC || 'http://127.0.0.1:8115';
 const KEY = JSON.parse(require('node:fs').readFileSync('/tmp/opencode/pool-key.json', 'utf8'));
+
+function rawRpc(url, method, params) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const http = require('node:http');
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
+    const req = http.request({ host: u.hostname, port: u.port || 8114, method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }, timeout: 10000 },
+      res => { let d = ''; res.on('data', c => d += c); res.on('end', () => {
+        try { const m = JSON.parse(d); m.error ? reject(new Error(JSON.stringify(m.error))) : resolve(m.result); } catch (e) { reject(e); }
+      }); });
+    req.on('error', reject); req.write(body); req.end();
+  });
+}
+
+/** Mine a block directly (dev chain uses Dummy PoW — any nonce is accepted). */
+async function mineBlock(url) {
+  const tpl = await rawRpc(url, 'get_block_template', [null, null, null]);
+  const { minimalNonceHex } = require('../src/edge/block-submitter.js');
+  const nonce = minimalNonceHex('0x' + Math.floor(Math.random() * 0xffffffff).toString(16).padStart(32, '0'));
+  const block = merkle.buildBlockForSubmit(tpl, nonce);
+  await rawRpc(url, 'submit_block', [tpl.work_id, block]);
+}
 
 let up = false;
 try {
@@ -20,6 +44,10 @@ try {
 } catch { up = false; }
 
 test('dev chain: signed payout tx accepted by the node', { timeout: 60000, skip: !up }, async () => {
+  // flush the mempool so earlier payout txs commit (their cells become spent)
+  for (let i = 0; i < 3; i++) {
+    try { await mineBlock(DEV_RPC); } catch { /* keep going */ }
+  }
   let r;
   try {
     r = await buildAndSendPayout({

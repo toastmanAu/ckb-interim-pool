@@ -30,6 +30,16 @@ const { createRpcClient } = require('../edge/rpc.js');
   let txBuilder;
   if (dryRun) {
     txBuilder = createDryRunBuilder({ payoutAddress: process.env.POOL_PAYOUT_FROM || 'dry-run' });
+  } else if (process.env.POOL_PAYOUT_BUILDER === 'ckb') {
+    // self-contained in-process builder (RFC 0022 sighash_all) — the batch
+    // becomes ONE signed transaction. Keys live on this host only.
+    const { createCkbInProcessBuilder } = require('./ckb-in-process.js');
+    txBuilder = createCkbInProcessBuilder({
+      rpcUrl: process.env.POOL_NODE_RPC || 'http://127.0.0.1:8114',
+      indexerUrl: process.env.POOL_INDEXER_URL || null,
+      privateKeyPath: process.env.POOL_PAYOUT_KEY,
+      feeRateShannons: parseInt(process.env.POOL_FEE_RATE_SHANNONS || '1000', 10),
+    });
   } else {
     if (!process.env.POOL_PAYOUT_KEY) {
       console.error('[PAYOUT] POOL_PAYOUT_KEY required unless POOL_PAYOUT_DRY_RUN=1');

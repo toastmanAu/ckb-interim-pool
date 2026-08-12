@@ -70,6 +70,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
     db,
     rpcClient: require('../edge/rpc.js').createRpcClient({ host: nodeHost, port: nodePort }),
     intervalMs: parseInt(process.env.POOL_BLOCK_INTERVAL_MS || '15000', 10),
+    maturityEpochs: parseInt(process.env.POOL_MATURITY_EPOCHS || '4', 10),
     feeBps: parseInt(process.env.POOL_FEE_BPS || '100', 10),
     windowNum: parseInt(process.env.POOL_PPLNS_WINDOW_NUM || '2', 10),
     windowDen: parseInt(process.env.POOL_PPLNS_WINDOW_DEN || '1', 10),

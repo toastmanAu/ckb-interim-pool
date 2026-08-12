@@ -13,11 +13,11 @@ const { createBlockTracker } = require('./block-tracker.js');
 const { allocateMatureBlock } = require('./allocator.js');
 const { verifyBlockConservation } = require('./ledger.js');
 
-function createBlockService({ db, rpcClient, intervalMs = 15000, feeBps = 100, windowNum = 2, windowDen = 1, logger = console, metrics = null }) {
+function createBlockService({ db, rpcClient, intervalMs = 15000, maturityEpochs = 4, feeBps = 100, windowNum = 2, windowDen = 1, logger = console, metrics = null }) {
   let timer = null;
   let stopped = false;
 
-  const tracker = createBlockTracker({ db, rpcClient, logger });
+  const tracker = createBlockTracker({ db, rpcClient, maturityEpochs, logger });
 
   async function tick() {
     await tracker.tick();
