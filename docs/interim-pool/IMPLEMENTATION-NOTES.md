@@ -184,6 +184,28 @@ assumptions now confirmed on-chain (previously fixture-only):
    minimal hex (`0x` + BigInt(nonce).toString(16)) before submission —
    value-preserving (identical serialized header bytes, pinned by test).
 
+## Full-stack rehearsal (2026-08-12, live node)
+
+`deploy/stack-rehearsal.sh`: real end-to-end run —
+**miner-sim → edge (.105 template) → NATS JetStream → ingest → PostgreSQL →
+API/dashboard**. 729 real Eaglesong shares mined against the live mainnet
+template in 20s, all ingested exactly once, visible in the API
+(`/api/v1/pool`, `/api/v1/miners/:address`). The simulator
+(`test/tools/miner-sim.js`) hashes real Eaglesong at the server-assigned
+difficulty.
+
+Bugs found and fixed during the rehearsal:
+- `accounting/main.js` hardcoded consumer subjects (`pool.v1.edge.>`) and
+  crashed if the stream did not exist yet → subjects now configurable via
+  `POOL_EVENT_SUBJECTS` + consumer creation retries (edges boot
+  independently of central).
+- **Silent publish loss**: the publisher's subject was hardcoded to
+  `pool.v1.edge.<id>.*`; with a custom stream namespace the messages
+  matched no stream and were dropped without error. Subject prefix is now
+  configurable (`events.subjectPrefix`) and the JetStream transport throws
+  when a publish matches no stream (fail loud, retry — never treat as
+  published). The spool keeps such events until they land.
+
 ## Remaining gates (not done in this session — ops/deployment)
 
 - Real K7/GodMiner + Goldshell hardware soak; NerdMiner low-diff path.

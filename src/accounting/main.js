@@ -16,7 +16,9 @@ const { processEvent, seqGaps } = require('./ingest.js');
 const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
 const NATS_URL = process.env.POOL_NATS_URL || 'nats://127.0.0.1:4223';
 const STREAM = process.env.POOL_STREAM || 'POOL_V1';
-const SUBJECTS = ['pool.v1.edge.>'];
+const SUBJECTS = (process.env.POOL_EVENT_SUBJECTS || 'pool.v1.edge.>').split(',').map(s => s.trim());
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 (async () => {
   const db = createDb(DB_URL);
@@ -28,22 +30,33 @@ const SUBJECTS = ['pool.v1.edge.>'];
   const js = nc.jetstream();
   const sc = StringCodec();
 
-  // durable ordered consumer
-  let consumer;
-  try {
-    consumer = await jsm.consumers.info(STREAM, 'accounting');
-  } catch {
-    await jsm.consumers.add(STREAM, {
-      name: 'accounting',
-      durable_name: 'accounting',
-      filter_subjects: SUBJECTS,
-      ack_policy: 'explicit',
-      deliver_policy: 'all',
-      ack_wait: 60 * 1_000_000_000,       // nanoseconds
-      max_deliver: -1,
-    });
-    consumer = await jsm.consumers.info(STREAM, 'accounting');
+  // durable ordered consumer — retry until the stream exists (edges boot
+  // independently; central must not crash during their startup window)
+  let consumer = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try {
+      consumer = await jsm.consumers.info(STREAM, 'accounting');
+      break;
+    } catch {
+      try {
+        await jsm.consumers.add(STREAM, {
+          name: 'accounting',
+          durable_name: 'accounting',
+          filter_subjects: SUBJECTS,
+          ack_policy: 'explicit',
+          deliver_policy: 'all',
+          ack_wait: 60 * 1_000_000_000,       // nanoseconds
+          max_deliver: -1,
+        });
+        consumer = await jsm.consumers.info(STREAM, 'accounting');
+        break;
+      } catch (e) {
+        console.warn(`[INGEST] stream/consumer not ready (${e.message.slice(0, 80)}) — retry ${attempt + 1}/60`);
+        await sleep(2000);
+      }
+    }
   }
+  if (!consumer) throw new Error('consumer could not be created after 60 attempts');
   const c = await js.consumers.get(STREAM, consumer.config.name);
 
   let applied = 0, duplicates = 0, invalid = 0;

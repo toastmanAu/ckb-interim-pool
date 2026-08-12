@@ -18,8 +18,8 @@
 
 const { validate } = require('./validate.js');
 
-function createPublisher({ spool, transport, logger = console, ackTimeoutMs = 10000, reconnectMs = 5000 }) {
-  const subjectFor = e => `pool.v1.edge.${e.edge_id}.${e.schema === 'pool.block.submit.v1' ? 'block_submit' : e.schema === 'pool.share.accepted.v1' ? 'share' : e.schema}`;
+function createPublisher({ spool, transport, logger = console, ackTimeoutMs = 10000, reconnectMs = 5000, subjectPrefix = 'pool.v1.edge' }) {
+  const subjectFor = e => `${subjectPrefix}.${e.edge_id}.${e.schema === 'pool.block.submit.v1' ? 'block_submit' : e.schema === 'pool.share.accepted.v1' ? 'share' : e.schema}`;
 
   const pending = [];      // records appended since last drain
   let draining = false;

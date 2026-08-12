@@ -24,7 +24,10 @@ function createEdgeSink({ config, transport, logger = console }) {
     syncIntervalMs: config.spool.syncIntervalMs,
     logger,
   });
-  const publisher = createPublisher({ spool, transport, logger });
+  const publisher = createPublisher({
+    spool, transport, logger,
+    subjectPrefix: config.events?.subjectPrefix || 'pool.v1.edge',
+  });
 
   return {
     spool,

@@ -37,6 +37,11 @@ function createNatsTransport({ servers = ['nats://127.0.0.1:4222'], stream = 'PO
     const ack = await js.publish(subject, sc.encode(JSON.stringify(event)), {
       msgID: event.event_id,          // JetStream dedup on redelivery of same event_id
     });
+    // Fail loud: if no stream matched the subject, the message was silently
+    // dropped — the publisher must retry, never treat this as published.
+    if (!ack.stream || ack.stream.length === 0) {
+      throw new Error(`publish to ${subject} matched no stream`);
+    }
     return ack;
   }
 
