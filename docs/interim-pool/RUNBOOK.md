@@ -116,12 +116,13 @@ connect:
 - **Baseline**: `au.wyltekpool.com:3333` → A record → home IP. Simplest, but
   the IP is discoverable via DNS and port scans.
 - **Recommended**: cheap region VPS running a TCP reverse proxy
-  (`deploy/proxy/nginx-stream.conf` or `haproxy.cfg`) over
-  WireGuard/Tailscale to the edge. Miners only ever see the VPS IP;
-  enables DDoS absorption and rate limiting at the edge of the network.
-  Enable `limits.proxyProtocol` in the edge config and
-  `send-proxy-v2` / `proxy_protocol on` on the proxy so the edge sees
-  real miner IPs for its per-IP connection limits.
+  (`deploy/proxy/setup-vps.sh` — one-shot installer — or
+  `nginx-stream.conf`/`haproxy.cfg`) over WireGuard/Tailscale to the
+  edge. Miners only ever see the VPS IP; enables DDoS absorption and
+  per-IP rate limiting at the proxy itself.
+  Optional PROXY protocol (real miner IPs at the edge): only when the
+  edge is not also serving direct LAN miners (the K7 would break, since
+  it connects without a PROXY header).
 - **Strongest**: Cloudflare Spectrum (paid, anycast TCP — the origin IP
   is never exposed; `deploy/proxy/cloudflared.yml` shows the free
   tunnel variant, which is HTTP-oriented and less suitable for stratum).
@@ -129,6 +130,28 @@ connect:
 Public surface from the edge host: **only the stratum port** (default
 3333). The stats/metrics port binds 127.0.0.1 in the region config; the
 CKB node RPC (8114) is never exposed outside the private network.
+
+### Deploying the AU proxy (IP hiding before inviting miners)
+
+1. **VPS**: any cheap provider (1 vCPU / 512 MB is ample for a TCP proxy).
+   Install WireGuard (or Tailscale) on both the VPS and the home host;
+   bring the tunnel up and note the home host's tunnel IP (e.g.
+   `10.0.0.2`).
+2. **Proxy**: on the VPS run
+   `TUNNEL_IP=10.0.0.2 ./deploy/proxy/setup-vps.sh` — installs nginx,
+   writes the stream config (with per-IP `limit_conn 8`), opens :3333.
+3. **DNS**: `A au.wyltekpool.com` → the VPS public IP, **grey cloud**.
+4. **HOME FIREWALL (critical)**: allow TCP :3333 **only** from the VPS
+   tunnel IP; drop it from the public Internet. If the home IP ever
+   leaks, the edge is still unreachable directly — the proxy stays the
+   only way in. (The same applies to the CKB node RPC: 8114 remains
+   private-network only.)
+5. Test: `nc -v au.wyltekpool.com 3333` from outside → connects; the
+   edge's `/health` shows the session coming from the VPS tunnel IP.
+6. Optional later: `limits.proxyProtocol: true` on the edge + nginx
+   `proxy_protocol on` — then real miner IPs reach the edge limits. Only
+   after the K7 path is separated (it connects directly on the LAN
+   without a PROXY header).
 
 ## 9. Global community deployment (multi-region)
 
