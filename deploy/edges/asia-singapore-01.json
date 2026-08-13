@@ -1,0 +1,59 @@
+{
+  "edge": {
+    "id": "asia-singapore-01",
+    "region": "eu",
+    "name": "asia region edge (VPS)",
+    "stratumHost": "0.0.0.0",
+    "stratumPort": 3333,
+    "statsHost": "127.0.0.1",
+    "statsPort": 8082,
+    "network": "ckb"
+  },
+  "node": {
+    "host": "127.0.0.1",
+    "port": 8114,
+    "wsPort": 28114,
+    "pollMs": 250,
+    "timeoutMs": 8000
+  },
+  "vardiff": {
+    "targetShareSec": 30,
+    "retargetSec": 60,
+    "variancePercent": 30,
+    "minDiff": 1,
+    "maxDiff": 1000000000,
+    "initialDiff": 1,
+    "godminerInitialDiff": 65536
+  },
+  "limits": {
+    "maxConnectionsPerIp": 8,
+    "maxConnectionsTotal": 256,
+    "idleTimeoutMs": 300000,
+    "maxLineBytes": 65536,
+    "jsonErrorBudget": 10,
+    "maxAuthAttempts": 20,
+    "maxPendingWriteBytes": 1048576
+  },
+  "spool": {
+    "dir": "/var/lib/wyltek-pool/asia-singapore-01",
+    "maxBytes": 1073741824,
+    "syncIntervalMs": 1000,
+    "highWaterBytes": 805306368
+  },
+  "events": {
+    "bus": "nats",
+    "subjectPrefix": "pool.v1.edge",
+    "nats": {
+      "servers": ["tls://pool-nats.example:4222"],
+      "stream": "POOL_V1",
+      "subjects": ["pool.v1.edge.>"],
+      "tls": {
+        "caFile": "/etc/wyltek-pool/nats-tls/ca.crt",
+        "certFile": "/etc/wyltek-pool/nats-tls/edge-us.crt",
+        "keyFile": "/etc/wyltek-pool/nats-tls/edge-us.key"
+      }
+    },
+    "ackTimeoutMs": 10000,
+    "reconnectSec": 2
+  }
+}

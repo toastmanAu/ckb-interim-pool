@@ -130,7 +130,38 @@ Public surface from the edge host: **only the stratum port** (default
 3333). The stats/metrics port binds 127.0.0.1 in the region config; the
 CKB node RPC (8114) is never exposed outside the private network.
 
-## 9. Region checklist (adding a region)
+## 9. Global community deployment (multi-region)
+
+The community is global, so run **full regional edges on VPSes**, not just
+proxies: each region gets its own `pool-edge` + CKB node on the same VPS
+(low-latency tip→notify path per spec 02 §1), publishing to the central
+NATS bus over mTLS. Miners in each region use the explicit region hostname;
+the operator's home IP is never involved.
+
+Endpoint matrix (explicit hostnames, never removed — spec 06 §3):
+
+| Region | Hostname | Deployment |
+|---|---|---|
+| AU | `au.pool.example:3333` | home edge + local node (this host), optionally behind a VPS proxy for IP hiding |
+| EU | `eu.pool.example:3333` | VPS edge + CKB node (`deploy/edges/eu-frankfurt-01.json`) |
+| US | `us.pool.example:3333` | VPS edge + CKB node (`deploy/edges/us-virginia-01.json`) |
+| Asia | `asia.pool.example:3333` | VPS edge + CKB node (`deploy/edges/asia-singapore-01.json`) |
+
+Per-VPS setup:
+1. Full CKB node (RPC bound to 127.0.0.1 — never public).
+2. `pool-edge` via the systemd unit or compose; the region config assumes
+   the node is on the VPS (`node.host: 127.0.0.1`).
+3. mTLS NATS client cert for the region (`deploy/gen-nats-tls.sh` +
+   `nats-server.conf` authorization entries — certs for eu/us already
+   generated; asia needs an entry added).
+4. GeoDNS: optional later, when several VPS edges exist. Never remove the
+   explicit hostnames (ASIC DNS caching varies).
+
+For the AU region specifically, the operator's home edge stays local to
+the K7; if its IP should stay private, put a region VPS proxy in front
+(§8) with `proxyProtocol` enabled.
+
+## 10. Region checklist (adding a region)
 
 1. CKB node synced, RPC bound to private interface only.
 2. NTP/chrony enabled (ordering depends on clock skew limits).
