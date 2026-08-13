@@ -308,10 +308,20 @@ without the dev node).
   with `POOL_DB_URL=…/pooltest_ci` — live sessions and tests are
   isolated.
 
+## K7 acceptance session (2026-08-13) — PASSED with two critical fixes
+
+Full record: `docs/interim-pool/k7-session-2026-08-13.md`. 135 accepted
+shares at 62.3 TH/s (miner UI: 66 TH/s — within 6%), no subscribe loop,
+vardiff converged, 8 transition rejects only, reconnect clean after 3 edge
+restarts. The session surfaced and fixed **two critical bugs**: block
+submission nonce byte order (consensus, latent in upstream) and share
+work_units from the network target (would have corrupted PPLNS). See the
+session record for the full timeline and evidence.
+
 ## Remaining gates (not done in this session — ops/deployment)
 
-- Real K7/GodMiner + Goldshell hardware soak (10:00–13:00 window tomorrow);
-  NerdMiner low-diff path.
+- Real mainnet block ACCEPTED with the nonce fix (next candidate) or the
+  testnet block drill; Goldshell/NerdMiner paths.
 - **ckb-indexer cell collection**: `collectPoolCells` now uses the
   ckb-indexer `get_cells` RPC when `POOL_INDEXER_URL` is set (paginated,
   live cells only); the block-scan fallback gained (a) chunked scanning
