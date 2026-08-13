@@ -161,7 +161,46 @@ For the AU region specifically, the operator's home edge stays local to
 the K7; if its IP should stay private, put a region VPS proxy in front
 (§8) with `proxyProtocol` enabled.
 
-## 10. Region checklist (adding a region)
+## 10. Community-run edges (the intended model)
+
+Other community members run edges + local CKB nodes on their own hardware;
+the operator does not need VPSes per region. The interim trust model stays
+operator-custodied: **central accounting is the single monetary authority**
+and community edges are treated as untrusted publishers — they carry no
+keys, see no balances, and can only append shares/blocks to their own
+subject namespace.
+
+Onboarding a community edge (operator side):
+1. Operator assigns an `edge_id` (e.g. `br-saopaulo-01`) and issues the
+   mTLS credential: `deploy/gen-nats-tls.sh new-edge <edge-id>`.
+2. Add the matching `nats-server.conf` user entry (template in the file) —
+   publish scope is exactly `pool.v1.edge.<edge-id>.>` plus the stream
+   append/INFO subjects. Reload NATS (no restart needed for user config? —
+   restart is safest).
+3. Record the edge in the endpoint matrix (§9) and the operator console.
+
+Edge operator side (runbook given to them):
+1. A synced CKB full node — RPC on 127.0.0.1 only, never public.
+2. The edge from a pinned release:
+   `git clone <repo> && git checkout <tag> && npm ci && npm test`.
+3. `deploy/edges/<region>.json` (region template) with their edge_id,
+   node host, and their mTLS cert paths.
+4. Run via systemd (`deploy/systemd/pool-edge@.service`) or docker.
+5. Only port 3333 is public; stats/metrics stay on 127.0.0.1.
+
+Trust notes for community edges:
+- The edge cannot read other edges' shares, the stream, or consumers
+  (server-enforced subject permissions — verified by the mTLS test).
+- The shared stream is created centrally (`deploy/bootstrap-stream.sh`);
+  edges cannot create/delete/modify it.
+- Central accounting validates structure/uniqueness; the share events keep
+  full PoW material (pow_hash, nonce, hash) so central revalidation
+  (sampled or full Eaglesong) can be enabled without protocol change —
+  recommended before adding many community edges.
+- An edge being compromised can only misreport ITS OWN shares (at most —
+  shares it fabricated would fail revalidation) and cannot touch funds.
+
+## 11. Region checklist (adding a region)
 
 1. CKB node synced, RPC bound to private interface only.
 2. NTP/chrony enabled (ordering depends on clock skew limits).

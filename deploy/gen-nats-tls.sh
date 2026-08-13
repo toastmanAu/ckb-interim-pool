@@ -21,7 +21,20 @@ if [ -f ca.crt ]; then
 fi
 
 SERVER_CN="${NATS_SERVER_CN:-pool-nats}"
+# community edges: onboard with `deploy/gen-nats-tls.sh new-edge <edge-id>`
 CLIENTS=(edge-au edge-eu edge-us ingest)
+if [ "${1:-}" = "new-edge" ]; then
+  E="${2:?usage: gen-nats-tls.sh new-edge <edge-id>}"
+  openssl genrsa -out "$E.key" 2048 2>/dev/null
+  openssl req -new -key "$E.key" -subj "/CN=${E}" -out "$E.csr"
+  printf 'subjectAltName = DNS:%s
+' "$E" > "$E-ext.cnf"
+  openssl x509 -req -in "$E.csr" -CA ca.crt -CAkey ca.key -CAcreateserial \
+    -out "$E.crt" -days 825 -sha256 -extfile "$E-ext.cnf"
+  rm -f "$E.csr" "$E-ext.cnf"
+  echo "edge credential issued: $E.crt/$E.key (CN=$E — add a matching nats-server.conf user entry + edge id)"
+  exit 0
+fi
 
 # ── CA ───────────────────────────────────────────────────────────────────────
 openssl genrsa -out ca.key 4096 2>/dev/null

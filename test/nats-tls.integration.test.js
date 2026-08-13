@@ -21,7 +21,7 @@ const { connect, StringCodec } = require('nats');
 
 const TLS_DIR = path.join(__dirname, '..', 'deploy', 'nats-tls');
 const URL = process.env.POOL_NATS_TLS_URL || 'nats://127.0.0.1:4224';
-const STREAM = 'POOL_V1_TLS_TEST';
+const STREAM = 'POOL_V1';
 const sc = StringCodec();
 
 const fs = require('node:fs');
@@ -40,15 +40,31 @@ async function connectAs(prefix, extra = {}) {
 }
 
 test('mTLS: per-edge publish isolation + ingest read-all', { timeout: 60000, skip: !hasCerts }, async t => {
-  // ── 1. edge-au publishes into its own namespace ──────────────────────────
+  // ── 1. the stream is created centrally with the INGEST credential (edges
+  //      are permissioned to append only and cannot create/delete streams)
+  const boot = await connectAs('ingest');
+  const jsmBoot = await boot.jetstreamManager();
+  const it = await jsmBoot.streams.list();
+  for await (const s of it) {
+    try { await jsmBoot.streams.delete(s.config.name); } catch {}
+  }
+  await jsmBoot.streams.add({ name: STREAM, subjects: ['pool.v1.edge.>'], retention: 'workqueue' });
+  await boot.close();
+
+  // edge-au publishes into its own namespace (append-only perms)
   const au = await connectAs('edge-au');
   const jsAu = au.jetstream();
   const jsmAu = await au.jetstreamManager();
-  try { await jsmAu.streams.delete(STREAM); } catch {}
-  await jsmAu.streams.add({ name: STREAM, subjects: ['pool.v1.edge.>'], retention: 'workqueue' });
+  await jsmAu.streams.info(STREAM);   // read-only INFO is allowed
 
   const ack = await jsAu.publish('pool.v1.edge.au-adelaide-01.share', sc.encode(JSON.stringify({ event_id: 't1', seq: 1 })), { msgID: 't1' });
   assert.ok(ack.stream === STREAM, 'edge-au publish lands in the stream');
+
+  // edge-au cannot create/delete streams (bootstrap must be central)
+  await assert.rejects(
+    jsmAu.streams.add({ name: 'POOL_V1_ROGUE', subjects: ['pool.v1.rogue.>'], retention: 'workqueue' }),
+    undefined, 'edge-au cannot create streams',
+  );
 
   // ── 2. edge-au cannot subscribe to edge-eu's namespace ───────────────────
   const iter = au.subscribe('pool.v1.edge.eu-frankfurt-01.share')[Symbol.asyncIterator]();
