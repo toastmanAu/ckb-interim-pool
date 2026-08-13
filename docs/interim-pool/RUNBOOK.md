@@ -161,6 +161,32 @@ For the AU region specifically, the operator's home edge stays local to
 the K7; if its IP should stay private, put a region VPS proxy in front
 (§8) with `proxyProtocol` enabled.
 
+## 10b. Domain setup (for mining endpoints)
+
+Any registrar works (Namecheap, Porkbun, Cloudflare Registrar — at-cost).
+Steps:
+
+1. Buy the domain (`.com`/`.xyz`/`.net` — TLD irrelevant to miners).
+2. Create a **free Cloudflare account** and add the domain; point the
+   registrar's name servers to the two Cloudflare NS addresses (the CF
+   onboarding wizard shows the exact values; propagation ~10 min).
+3. Create these records (Cloudflare → DNS):
+
+| Type | Name | Value | Proxy |
+|---|---|---|---|
+| A | `au.pool.example` | home IP (or AU VPS IP) | DNS only (grey) |
+| A | `eu.pool.example` | EU edge IP | DNS only |
+| A | `us.pool.example` | US edge IP | DNS only |
+| A | `asia.pool.example` | Asia edge IP | DNS only |
+| A | `pool.example` | dashboard/API host | Proxied (orange, optional) |
+
+   **Gotcha:** the free Cloudflare plan proxies HTTP only. Stratum is raw
+   TCP on :3333 — mining records must stay DNS-only (grey cloud). IP
+   hiding for stratum = the VPS proxy (§8) or Spectrum (paid).
+4. Miners then use `stratum+tcp://<region>.pool.example:3333`.
+5. Consider DNSSEC later (Cloudflare supports it; ASICs don't care, it
+   protects the records).
+
 ## 10. Community-run edges (the intended model)
 
 Other community members run edges + local CKB nodes on their own hardware;
