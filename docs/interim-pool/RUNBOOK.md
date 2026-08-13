@@ -113,7 +113,7 @@ Explicit region hostnames are mandatory (spec 06 §3 — ASIC DNS caching
 varies). To keep the operator's direct IP private when community miners
 connect:
 
-- **Baseline**: `au.pool.example:3333` → A record → home IP. Simplest, but
+- **Baseline**: `au.wyltekpool.com:3333` → A record → home IP. Simplest, but
   the IP is discoverable via DNS and port scans.
 - **Recommended**: cheap region VPS running a TCP reverse proxy
   (`deploy/proxy/nginx-stream.conf` or `haproxy.cfg`) over
@@ -142,10 +142,10 @@ Endpoint matrix (explicit hostnames, never removed — spec 06 §3):
 
 | Region | Hostname | Deployment |
 |---|---|---|
-| AU | `au.pool.example:3333` | home edge + local node (this host), optionally behind a VPS proxy for IP hiding |
-| EU | `eu.pool.example:3333` | VPS edge + CKB node (`deploy/edges/eu-frankfurt-01.json`) |
-| US | `us.pool.example:3333` | VPS edge + CKB node (`deploy/edges/us-virginia-01.json`) |
-| Asia | `asia.pool.example:3333` | VPS edge + CKB node (`deploy/edges/asia-singapore-01.json`) |
+| AU | `au.wyltekpool.com:3333` | home edge + local node (this host), optionally behind a VPS proxy for IP hiding |
+| EU | `eu.wyltekpool.com:3333` | VPS edge + CKB node (`deploy/edges/eu-frankfurt-01.json`) |
+| US | `us.wyltekpool.com:3333` | VPS edge + CKB node (`deploy/edges/us-virginia-01.json`) |
+| Asia | `asia.wyltekpool.com:3333` | VPS edge + CKB node (`deploy/edges/asia-singapore-01.json`) |
 
 Per-VPS setup:
 1. Full CKB node (RPC bound to 127.0.0.1 — never public).
@@ -174,16 +174,16 @@ Steps:
 
 | Type | Name | Value | Proxy |
 |---|---|---|---|
-| A | `au.pool.example` | home IP (or AU VPS IP) | DNS only (grey) |
-| A | `eu.pool.example` | EU edge IP | DNS only |
-| A | `us.pool.example` | US edge IP | DNS only |
-| A | `asia.pool.example` | Asia edge IP | DNS only |
-| A | `pool.example` | dashboard/API host | Proxied (orange, optional) |
+| A | `au.wyltekpool.com` | home IP (or AU VPS IP) | DNS only (grey) |
+| A | `eu.wyltekpool.com` | EU edge IP | DNS only |
+| A | `us.wyltekpool.com` | US edge IP | DNS only |
+| A | `asia.wyltekpool.com` | Asia edge IP | DNS only |
+| A | `wyltekpool.com` | dashboard/API host | Proxied (orange, optional) |
 
    **Gotcha:** the free Cloudflare plan proxies HTTP only. Stratum is raw
    TCP on :3333 — mining records must stay DNS-only (grey cloud). IP
    hiding for stratum = the VPS proxy (§8) or Spectrum (paid).
-4. Miners then use `stratum+tcp://<region>.pool.example:3333`.
+4. Miners then use `stratum+tcp://<region>.wyltekpool.com:3333`.
 5. Consider DNSSEC later (Cloudflare supports it; ASICs don't care, it
    protects the records).
 
@@ -233,7 +233,7 @@ Trust notes for community edges:
 3. Edge config `deploy/edges/<region>.json`; systemd unit instance.
 4. NATS client cert `edge-<region>` added to `gen-nats-tls.sh` + server
    authorization block (publish scoped to `pool.v1.edge.<id>.>`).
-5. Explicit region hostname (`<region>.pool.example:3333`), backup endpoint
+5. Explicit region hostname (`<region>.wyltekpool.com:3333`), backup endpoint
    documented in the UI (spec 06 §3).
 6. Prometheus scrape job + alert rules for the new edge.
 7. Firewall: stratum port public, node RPC + stats port private.

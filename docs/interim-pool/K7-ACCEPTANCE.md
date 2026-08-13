@@ -85,5 +85,5 @@ The same edge (or the production region edges) serves remote machines:
 - the public API/dashboard (`deploy/docker-compose.yml`) gives them their
   balances/shares without any registration;
 - per-IP connection limits in the edge config protect the stratum endpoint;
-- publish the endpoint as `au.pool.example:3333` style, keep explicit region
+- publish the endpoint as `au.wyltekpool.com:3333` style, keep explicit region
   hostnames (spec 06 §3), and document backup endpoints.

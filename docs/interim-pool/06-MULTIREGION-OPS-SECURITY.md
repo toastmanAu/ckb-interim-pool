@@ -28,10 +28,10 @@ Production can later use two edges/nodes per region behind TCP load balancing, b
 Initial explicit endpoints are operationally simplest:
 
 ```text
-au.pool.example:3333
-eu.pool.example:3333
-us.pool.example:3333
-asia.pool.example:3333
+au.wyltekpool.com:3333
+eu.wyltekpool.com:3333
+us.wyltekpool.com:3333
+asia.wyltekpool.com:3333
 ```
 
 Provide backup endpoints in documentation/miner UI.
