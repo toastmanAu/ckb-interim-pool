@@ -300,12 +300,13 @@ without the dev node).
   history, blocks found. API additions: miner work windows (10m/24h),
   per-worker work windows, `hashrate-window` hourly aggregation, miner
   blocks.
-- **Session hygiene finding**: integration tests seed rows into the same
-  test DB the live stack uses — a leftover MATURE test block was picked up
-  by the live block-service and allocated (junk). Fixed: allocator now
-  skips template-less blocks (reverts the guard, logs, keeps MATURE for
-  investigation); run `node -e` cleanup after tests. Longer term the tests
-  should use a dedicated database.
+- **Session hygiene finding (fixed)**: integration tests ran against the
+  same `pooltest` DB as the live session and truncated live data twice
+  (shares wiped, a leftover MATURE test block was allocated by the live
+  block-service). Fixes: allocator skips template-less blocks; `pg-test.sh`
+  now creates a dedicated **`pooltest_ci`** database and tests must run
+  with `POOL_DB_URL=…/pooltest_ci` — live sessions and tests are
+  isolated.
 
 ## Remaining gates (not done in this session — ops/deployment)
 

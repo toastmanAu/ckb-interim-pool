@@ -14,8 +14,12 @@ else
   echo "postgres test server already running on :${PORT}"
 fi
 for i in $(seq 1 20); do
-  if docker exec pool-pg-test pg_isready -U pool >/dev/null 2>&1; then exit 0; fi
+  if docker exec pool-pg-test pg_isready -U pool >/dev/null 2>&1; then break; fi
   sleep 0.5
 done
+# dedicated CI/test database — integration tests must never touch the
+# live session database (they truncate their tables at start)
+docker exec pool-pg-test psql -U pool -d postgres -c "CREATE DATABASE pooltest_ci" >/dev/null 2>&1 || true
+docker exec pool-pg-test psql -U pool -d postgres -c "GRANT ALL PRIVILEGES ON DATABASE pooltest_ci TO pool" >/dev/null 2>&1 || true
 echo "postgres not ready" >&2
 exit 1
