@@ -44,7 +44,7 @@ function createApiServer({ db, policy = {}, nodeRpc = null, logger = console }) 
         `SELECT block_hash, height, state, found_at FROM blocks ORDER BY found_at DESC NULLS LAST LIMIT 1`,
       )).rows[0] || null;
       return json(res, 200, {
-        hashrate_10m: h10[0].w, hashrate_1h: h1h[0].w, hashrate_24h: h24h[0].w,
+        hashrate_10m: h10, hashrate_1h: h1h, hashrate_24h: h24h,
         active_workers: workers.rows[0].c, active_sessions: workers.rows[0].s,
         active_miners: miners.rows[0].c,
         round_work: round.rows[0].w,

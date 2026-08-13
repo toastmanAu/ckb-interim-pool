@@ -73,7 +73,14 @@ function validateShare({ family, extranonce1, nonceRaw, job, isCurrentJob, miner
     };
   }
 
-  const workUnits = targetLEToWorkUnits(job.targetLE);
+  // The share's work is its ASSIGNED difficulty (the vardiff target the
+  // miner was solving), never the network target. Using the network target
+  // inflates work by the network/assigned ratio (≈15-500x on mainnet) —
+  // corrupting both hashrate estimates and PPLNS fairness. The network
+  // reference work travels separately in network_difficulty_q.
+  const { diffToTargetLE } = require('../mining/ckb-target.js');
+  const assignedTargetLE = diffToTargetLE(minerDiff);
+  const workUnits = targetLEToWorkUnits(assignedTargetLE);
 
   const outcome = !isCurrentJob && !v.isBlock
     ? 'acked_stale'
