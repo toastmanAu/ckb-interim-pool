@@ -422,6 +422,7 @@ test('block submitter: minimal hex parse-rule form, value-preserving (uints.rs)'
     '01000000000000000000000000000000',
     'aabbccdd00000001000000000000009b',
     '019ff89d0000002206009d2737d6a758',
+    '4ae0c2ff9486d9b0000000753e75b8d',   // odd-length minimal form
   ]) {
     // invariant: LE(value(submitted hex)) == raw miner nonce bytes
     const submitted = minimalNonceHex(rawN);

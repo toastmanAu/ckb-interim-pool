@@ -14,9 +14,10 @@
 
 const merkle = require('../mining/ckb-merkle.js');
 
-/** Reverse the byte order of a 32-hex-char (16-byte) nonce. */
+/** Reverse the byte order of a nonce hex string (pads to even length first —
+ *  minimal-form nonces from the node can be odd-length). */
 function reverseNonceHex(nonceHex) {
-  const h = nonceHex.replace(/^0x/, '');
+  const h = nonceHex.replace(/^0x/, '').padStart(32, '0');
   let out = '';
   for (let i = h.length - 2; i >= 0; i -= 2) out += h.slice(i, i + 2);
   return out;
