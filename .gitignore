@@ -9,3 +9,4 @@ deploy/nats-tls/
 .env
 config.json
 pool-key*
+.spool-au-adelaide-01/

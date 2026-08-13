@@ -14,22 +14,35 @@
 
 const merkle = require('../mining/ckb-merkle.js');
 
+/** Reverse the byte order of a 32-hex-char (16-byte) nonce. */
+function reverseNonceHex(nonceHex) {
+  const h = nonceHex.replace(/^0x/, '');
+  let out = '';
+  for (let i = h.length - 2; i >= 0; i -= 2) out += h.slice(i, i + 2);
+  return out;
+}
+
 /**
  * Minimal hex form required by the node's Uint128 JSON parser
  * (ckb util/jsonrpc-types/src/uints.rs: any leading zero nibble after 0x is
  * rejected as "redundant leading zeros"). Value-preserving: the serialized
  * header bytes (writeU128 LE) are identical.
- * Verified live (2026-08-12, node at .105): ~8.5% of recent mainnet blocks
- * carry a minimal-form nonce — the upstream zero-padded form would be
- * rejected for those.
+ *
+ * CRITICAL (found live, 2026-08-13): the node serializes the header nonce
+ * as a u128 VALUE in little-endian, while miners hash the RAW nonce bytes.
+ * The header JSON must therefore carry the byte-REVERSED nonce:
+ *   LE(value(hex(reverse(raw)))) == raw  →  the node hashes exactly what
+ * the miner hashed. Submitting the raw bytes makes the node hash a
+ * different 128-bit value → InvalidNonce even for a genuine block solution.
  */
 function minimalNonceHex(noncePadded) {
-  return '0x' + BigInt('0x' + noncePadded.replace(/^0x/, '')).toString(16);
+  const reversed = reverseNonceHex(noncePadded);
+  return '0x' + BigInt('0x' + reversed).toString(16);
 }
 
 function createBlockSubmitter({ rpcClient, logger = console }) {
   /**
-   * @param {string} noncePadded  full 32-hex-char nonce (no 0x)
+   * @param {string} noncePadded  full 32-hex-char nonce (no 0x), raw bytes
    * @param {object} template     get_block_template result for the solved job
    * @returns {Promise<{ok:boolean, error?:string, latencyMs:number}>}
    */
@@ -52,4 +65,4 @@ function createBlockSubmitter({ rpcClient, logger = console }) {
   return { submitBlock };
 }
 
-module.exports = { createBlockSubmitter, minimalNonceHex };
+module.exports = { createBlockSubmitter, minimalNonceHex, reverseNonceHex };

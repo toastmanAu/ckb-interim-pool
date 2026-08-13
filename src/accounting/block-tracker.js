@@ -23,6 +23,10 @@ const { serializeFullHeader, parseEpoch } = require('../mining/ckb-header.js');
 
 function candidateBlockHash(headerFields, nonceHex) {
   const h = headerFields;
+  // the node serializes the header nonce as a u128 value in LE — mirror the
+  // submission form (see src/edge/block-submitter.js) so the recomputed
+  // hash matches what the node stores
+  const { minimalNonceHex } = require('../edge/block-submitter.js');
   return ckbBlake2b(serializeFullHeader({
     version: h.version,
     compact_target: h.compact_target,
@@ -34,7 +38,7 @@ function candidateBlockHash(headerFields, nonceHex) {
     proposals_hash: h.proposals_hash,
     extra_hash: h.extra_hash,
     dao: h.dao,
-  }, nonceHex)).toString('hex');
+  }, minimalNonceHex(nonceHex))).toString('hex');
 }
 
 function createBlockTracker({ db, rpcClient, maturityEpochs = 4, logger = console, intervalMs = 5000 }) {

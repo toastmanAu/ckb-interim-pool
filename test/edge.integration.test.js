@@ -307,7 +307,11 @@ test('block discovery: immediate local submission + clean notify + block event',
   assert.strictEqual(node.submitted.length, 1);
   const s = node.submitted[0];
   assert.strictEqual(s.workId, '0x2');
-  assert.strictEqual(s.block.header.nonce, '0x' + en1 + '000000000000009b');
+  // the node reads the nonce as a u128 value serialized LE — the submitted
+  // hex is the byte-reversed raw nonce (live-node finding, 2026-08-13)
+  const rawNonce = en1 + '000000000000009b';
+  const reversed = rawNonce.match(/.{2}/g).reverse().join('');
+  assert.strictEqual(s.block.header.nonce, '0x' + reversed);
   assert.strictEqual(parseInt(s.block.header.number, 16), parseInt(fixture.header.number, 16) + 1);
 
   // miner gets clean=true notify after a find
@@ -407,18 +411,41 @@ test('two K7 sessions keep distinct extranonce1 (nonce space separation)', async
   assert.notStrictEqual(r1.result[1], r2.result[1]);
 });
 
-test('block submitter: nonce sent in node-accepted minimal hex form (live-node finding)', () => {
+test('block submitter: minimal hex parse-rule form, value-preserving (uints.rs)', () => {
   const { minimalNonceHex } = require('../src/edge/block-submitter.js');
-  assert.strictEqual(minimalNonceHex('00000000000000000000000000000001'), '0x1');
-  assert.strictEqual(minimalNonceHex('00000000000000000000000000001234'), '0x1234');
-  assert.strictEqual(minimalNonceHex('aabbccdd0000000100000000000009b0'), '0xaabbccdd0000000100000000000009b0');
-  assert.strictEqual(minimalNonceHex('00000000000000000000000000000000'), '0x0');
-  // value preservation: header bytes unchanged
   const { serializeFullHeader } = require('../src/mining/ckb-header.js');
   const f = { version: '0x0', compact_target: '0x191b3f4f', timestamp: '0x1', number: '0x1', epoch: '0x1',
               parent_hash: '0x' + '00'.repeat(32), transactions_root: '0x' + '11'.repeat(32),
               proposals_hash: '0x' + '22'.repeat(32), extra_hash: '0x' + '33'.repeat(32), dao: '0x' + '44'.repeat(32) };
-  const a = serializeFullHeader(f, '0x00000000000000000000000000001234');
-  const b = serializeFullHeader(f, '0x1234');
-  assert.deepStrictEqual(a, b, 'minimal form serializes to identical header bytes');
+  for (const rawN of [
+    '00000000000000000000000000000001',
+    '01000000000000000000000000000000',
+    'aabbccdd00000001000000000000009b',
+    '019ff89d0000002206009d2737d6a758',
+  ]) {
+    // invariant: LE(value(submitted hex)) == raw miner nonce bytes
+    const submitted = minimalNonceHex(rawN);
+    assert.match(submitted, /^0x[1-9a-f][0-9a-f]*$/, 'no redundant leading zeros');
+    const value = BigInt(submitted);
+    const le = Buffer.alloc(16);
+    for (let i = 0; i < 16; i++) le[i] = Number((value >> BigInt(8 * i)) & 0xffn);
+    assert.strictEqual(le.toString('hex'), rawN, `LE(value(${submitted})) == ${rawN}`);
+    // and the serialized header nonce region carries exactly those bytes
+    const serialized = serializeFullHeader(f, submitted);
+    assert.strictEqual(serialized.subarray(192, 208).toString('hex'), rawN);
+  }
+});
+
+test('block submitter: nonce submitted in node LE-value form (live finding 2026-08-13)', () => {
+  const { minimalNonceHex, reverseNonceHex } = require('../src/edge/block-submitter.js');
+  const raw = '019ff89d0000002206009d2737d6a758';   // real winning share
+  assert.strictEqual(reverseNonceHex(raw), '58a7d637279d0006220000009df89f01');
+  assert.strictEqual(minimalNonceHex(raw), '0x58a7d637279d0006220000009df89f01');
+  // LE(value(submitted)) == raw bytes → the node hashes what the miner hashed
+  const value = BigInt(minimalNonceHex(raw));
+  const le = Buffer.alloc(16);
+  for (let i = 0; i < 16; i++) le[i] = Number((value >> BigInt(8 * i)) & 0xffn);
+  assert.strictEqual(le.toString('hex'), raw);
+  // palindrome nonces are unaffected (ab*16)
+  assert.strictEqual(minimalNonceHex('ab'.repeat(16)), '0x' + 'ab'.repeat(16));
 });

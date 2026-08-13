@@ -1,0 +1,53 @@
+{
+  "edge": {
+    "id": "au-adelaide-01",
+    "region": "au",
+    "name": "Adelaide region edge",
+    "stratumHost": "0.0.0.0",
+    "stratumPort": 3333,
+    "statsHost": "0.0.0.0",
+    "statsPort": 8082,
+    "network": "ckb"
+  },
+  "node": {
+    "host": "192.168.68.105",
+    "port": 8114,
+    "wsPort": 28114,
+    "pollMs": 250,
+    "timeoutMs": 8000
+  },
+  "vardiff": {
+    "targetShareSec": 30,
+    "retargetSec": 60,
+    "variancePercent": 30,
+    "minDiff": 1,
+    "maxDiff": 1000000000,
+    "initialDiff": 1,
+    "godminerInitialDiff": 65536
+  },
+  "limits": {
+    "maxConnectionsPerIp": 8,
+    "maxConnectionsTotal": 64,
+    "idleTimeoutMs": 300000,
+    "maxLineBytes": 65536,
+    "jsonErrorBudget": 10,
+    "maxAuthAttempts": 20
+  },
+  "spool": {
+    "dir": "/home/phill/wyltek-pool/.spool-au-adelaide-01",
+    "maxBytes": 1073741824,
+    "syncIntervalMs": 1000,
+    "highWaterBytes": 805306368
+  },
+  "events": {
+    "bus": "nats",
+    "subjectPrefix": "pool.v1.edge",
+    "nats": {
+      "servers": ["nats://127.0.0.1:4223"],
+      "stream": "POOL_V1",
+      "subjects": ["pool.v1.edge.>"]
+    },
+    "ackTimeoutMs": 10000,
+    "reconnectSec": 2
+  }
+}
