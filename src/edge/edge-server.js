@@ -417,34 +417,91 @@ function createEdgeServer({ config, templateService, blockSubmitter, sink, logge
   }
 
   // ── TCP server ─────────────────────────────────────────────────────────────
-  const stratumServer = net.createServer(socket => {
-    const ip = socket.remoteAddress || '?';
-    const ipCount = (perIp.get(ip) || 0) + 1;
-    if (ipCount > limits.maxConnectionsPerIp) {
-      metrics.inc('connections_ip_limited_total');
-      socket.destroy();
-      return;
+  const useProxyProtocol = !!limits.proxyProtocol;
+
+  /**
+   * Parse a PROXY protocol header (v1 text line or v2 binary) and return the
+   * reported source address string, or null when more bytes are needed, or
+   * 'bad' when the header is malformed. Pair with headerLenFor().
+   */
+  function parseProxyHeader(buf) {
+    if (buf.length >= 16 &&
+        buf[0] === 0x0d && buf[1] === 0x0a && buf[2] === 0x0d && buf[3] === 0x0a &&
+        buf[4] === 0x00 && buf[5] === 0x0d && buf[6] === 0x0a && buf[7] === 0x51 &&
+        buf[8] === 0x55 && buf[9] === 0x49 && buf[10] === 0x54 && buf[11] === 0x0a) {
+      // v2: 16-byte header + address length at bytes 14-15
+      const len = (buf[14] << 8) | buf[15];
+      if (buf.length < 16 + len) return null;
+      const fam = buf[13] & 0x0f;   // 0x1 = IPv4, 0x2 = IPv6
+      if (fam === 0x1) return `${buf[16]}.${buf[17]}.${buf[18]}.${buf[19]}`;
+      if (fam === 0x2) {
+        const a = [];
+        for (let i = 0; i < 16; i++) a.push(buf[16 + i].toString(16).padStart(2, '0'));
+        let out = '';
+        for (let i = 0; i < 16; i += 2) {
+          if (i > 0) out += ':';
+          out += a[i] + a[i + 1];
+        }
+        return out;
+      }
+      return 'bad';
     }
-    if (sessions.size >= limits.maxConnectionsTotal) {
+    const nl = buf.indexOf('\n');
+    if (nl === -1) return buf.length > 200 ? 'bad' : null;
+    const line = buf.subarray(0, nl).toString('utf8').trim();
+    const m = /^PROXY\s+TCP4\s+(\S+)\s+\S+\s+\d+\s+\d+/.exec(line);
+    if (m) return m[1];
+    if (/^PROXY\s+UNKNOWN/.test(line)) return 'proxy-unknown';
+    return 'bad';
+  }
+
+  /** Bytes consumed by the PROXY header in a buffer (for v1/v2). */
+  function useProxyProtocolHeaderLen(buf) {
+    if (buf.length >= 16 &&
+        buf[0] === 0x0d && buf[1] === 0x0a && buf[2] === 0x0d && buf[3] === 0x0a &&
+        buf[4] === 0x00 && buf[5] === 0x0d && buf[6] === 0x0a && buf[7] === 0x51 &&
+        buf[8] === 0x55 && buf[9] === 0x49 && buf[10] === 0x54 && buf[11] === 0x0a) {
+      return 16 + ((buf[14] << 8) | buf[15]);
+    }
+    const nl = buf.indexOf('\n');
+    return nl === -1 ? buf.length : nl + 1;
+  }
+
+  const stratumServer = net.createServer(socket => {
+    let proxyPending = useProxyProtocol;   // true until the PROXY header is parsed
+    let proxyBuf = Buffer.alloc(0);
+
+    connectionSeq++;
+    const session = createSession(socket);
+    const registerIp = (ip) => {
+      const ipCount = (perIp.get(ip) || 0) + 1;
+      if (ipCount > limits.maxConnectionsPerIp) {
+        metrics.inc('connections_ip_limited_total');
+        socket.destroy();
+        return false;
+      }
+      perIp.set(ip, ipCount);
+      session.remoteIp = ip;
+      return true;
+    };
+
+    if (!useProxyProtocol) {
+      if (!registerIp(socket.remoteAddress || '?')) return;
+    } else if (sessions.size >= limits.maxConnectionsTotal) {
       metrics.inc('connections_total_limited_total');
       socket.destroy();
       return;
     }
-    perIp.set(ip, ipCount);
-    connectionSeq++;
-    const session = createSession(socket);
     sessions.set(session.id, session);
     metrics.gauge('connections', sessions.size);
-    logger.log('MINE', `#${session.id.slice(0, 8)} connected from ${ip}`);
+    logger.log('MINE', `#${session.id.slice(0, 8)} connected from ${session.remoteIp}`);
 
     socket.setTimeout(limits.idleTimeoutMs, () => {
       logger.log('MINE', `#${session.id.slice(0, 8)} idle timeout`);
       socket.destroy();
     });
 
-    socket.on('data', data => {
-      session.lastActivity = clock();
-      session.buffer += data.toString();
+    function processStratum() {
       if (session.buffer.length > limits.maxLineBytes * 2) {
         metrics.inc('connections_overlong_total');
         session.socket.destroy();
@@ -473,16 +530,42 @@ function createEdgeServer({ config, templateService, blockSubmitter, sink, logge
         }
         handleMessage(session, msg);
       }
+    }
+
+    socket.on('data', data => {
+      session.lastActivity = clock();
+      if (proxyPending) {
+        proxyBuf = Buffer.concat([proxyBuf, Buffer.from(data)]);
+        const parsed = parseProxyHeader(proxyBuf);
+        if (parsed === null) return;                       // need more bytes
+        if (parsed === 'bad') { socket.destroy(); return; }
+        proxyPending = false;
+        if (!registerIp(parsed)) return;                   // limit exceeded
+        logger.log('MINE', `#${session.id.slice(0, 8)} (proxy) from ${parsed}`);
+        // feed any bytes after the PROXY header into the stratum stream
+        const consumed = useProxyProtocolHeaderLen(proxyBuf);
+        if (consumed < proxyBuf.length) {
+          session.buffer += proxyBuf.subarray(consumed).toString();
+          processStratum();
+        }
+        return;
+      }
+      session.buffer += data.toString();
+      processStratum();
     });
 
     socket.on('close', () => {
       sessions.delete(session.id);
-      perIp.set(ip, (perIp.get(ip) || 1) - 1);
-      if (perIp.get(ip) <= 0) perIp.delete(ip);
+      const ip = session.remoteIp;
+      if (ip && perIp.has(ip)) {
+        perIp.set(ip, perIp.get(ip) - 1);
+        if (perIp.get(ip) <= 0) perIp.delete(ip);
+      }
       metrics.gauge('connections', sessions.size);
       logger.log('MINE', `#${session.id.slice(0, 8)} disconnected`);
     });
     socket.on('error', err => logger.log('MINE', `#${session.id.slice(0, 8)} error: ${err.message}`));
+
   });
 
   // ── stats / health server ──────────────────────────────────────────────────

@@ -1,0 +1,28 @@
+# cloudflared example — strongest IP hiding: miners connect to Cloudflare's
+# anycast network; the origin (home) IP is never exposed.
+#
+# Requires a domain on Cloudflare and the free `cloudflared` binary.
+# NOTE: Spectrum (paid) is the designed product for raw TCP; `cloudflared`
+# tunnel TCP ingress works via a local TCP relay. Latency: miners → nearest
+# CF edge → tunnel → home — fine for AU miners to an AU edge.
+#
+# Setup:
+#   cloudflared tunnel login
+#   cloudflared tunnel create pool
+#   cloudflared tunnel route dns pool au.pool.example
+#   cloudflared tunnel run pool   (with the config below)
+#
+# Then ALSO restrict: only :3333 (stratum) and optionally the dashboard
+# (http://au.pool.example) are routed; the CKB node RPC and stats stay
+# private.
+
+tunnel: pool
+credentials-file: /root/.cloudflared/<tunnel-id>.json
+
+ingress:
+  - hostname: au.pool.example
+    service: tcp://127.0.0.1:3333        # local TCP relay on this host
+  # dashboard (optional)
+  - hostname: pool.example
+    service: http://127.0.0.1:8092
+  - service: http_status:404

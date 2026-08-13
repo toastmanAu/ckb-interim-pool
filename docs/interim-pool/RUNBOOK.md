@@ -107,7 +107,30 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
 | Payout key | payout host only (`POOL_PAYOUT_KEY`) | edges, api, CI |
 | CKB RPC | private network only | public internet |
 
-## 8. Region checklist (adding a region)
+## 8. Public endpoints without exposing the home IP
+
+Explicit region hostnames are mandatory (spec 06 §3 — ASIC DNS caching
+varies). To keep the operator's direct IP private when community miners
+connect:
+
+- **Baseline**: `au.pool.example:3333` → A record → home IP. Simplest, but
+  the IP is discoverable via DNS and port scans.
+- **Recommended**: cheap region VPS running a TCP reverse proxy
+  (`deploy/proxy/nginx-stream.conf` or `haproxy.cfg`) over
+  WireGuard/Tailscale to the edge. Miners only ever see the VPS IP;
+  enables DDoS absorption and rate limiting at the edge of the network.
+  Enable `limits.proxyProtocol` in the edge config and
+  `send-proxy-v2` / `proxy_protocol on` on the proxy so the edge sees
+  real miner IPs for its per-IP connection limits.
+- **Strongest**: Cloudflare Spectrum (paid, anycast TCP — the origin IP
+  is never exposed; `deploy/proxy/cloudflared.yml` shows the free
+  tunnel variant, which is HTTP-oriented and less suitable for stratum).
+
+Public surface from the edge host: **only the stratum port** (default
+3333). The stats/metrics port binds 127.0.0.1 in the region config; the
+CKB node RPC (8114) is never exposed outside the private network.
+
+## 9. Region checklist (adding a region)
 
 1. CKB node synced, RPC bound to private interface only.
 2. NTP/chrony enabled (ordering depends on clock skew limits).

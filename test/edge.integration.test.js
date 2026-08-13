@@ -451,3 +451,52 @@ test('block submitter: nonce submitted in node LE-value form (live finding 2026-
   // palindrome nonces are unaffected (ab*16)
   assert.strictEqual(minimalNonceHex('ab'.repeat(16)), '0x' + 'ab'.repeat(16));
 });
+
+test('PROXY protocol: real miner IP used for limits and attribution', async t => {
+  const { stratumPort } = await startTestEdge(t, {
+    configOverrides: { limits: { maxConnectionsPerIp: 2, maxConnectionsTotal: 16, proxyProtocol: true } },
+  });
+  const net = require('node:net');
+  const connect = () => new Promise((resolve, reject) => {
+    const sock = net.connect(stratumPort, '127.0.0.1');
+    let buf = '';
+    const messages = [];
+    sock.setEncoding('utf8');
+    sock.on('data', d => { buf += d; let i; while ((i = buf.indexOf('\n')) !== -1) { messages.push(JSON.parse(buf.slice(0, i))); buf = buf.slice(i + 1); } });
+    sock.on('connect', () => resolve({
+      sock, messages,
+      send: o => sock.write(JSON.stringify(o) + '\n'),
+      waitFor: (p, ms = 4000) => new Promise((res, rej) => { const t0 = Date.now(); (function poll() { const hit = messages.find(p); if (hit) return res(hit); if (Date.now() - t0 > ms) return rej(new Error('timeout')); setTimeout(poll, 20); })(); }),
+    }));
+    sock.on('error', reject);
+  });
+
+  // v1 header + subscribe in the same chunk (the important framing case)
+  const m1 = await connect();
+  m1.sock.write('PROXY TCP4 203.0.113.9 10.0.0.2 3333 50000\r\n' + JSON.stringify({ id: 1, method: 'mining.subscribe', params: ['intminer/1.0.0'] }) + '\n');
+  const s1 = await m1.waitFor(m => m.id === 1);
+  assert.ok(s1.result, 'subscribe works through the proxy header');
+  await m1.sock.destroy();
+
+  // v2 header (binary) — IPv4
+  const m2 = await connect();
+  const v2 = Buffer.alloc(16 + 12);
+  Buffer.from([0x0d, 0x0a, 0x0d, 0x0a, 0x00, 0x0d, 0x0a, 0x51, 0x55, 0x49, 0x54, 0x0a]).copy(v2, 0);
+  v2[12] = 0x21; v2[13] = 0x11;            // v2, cmd PROXY, fam TCP4
+  v2.writeUInt16BE(12, 14);
+  [198, 51, 100, 10].forEach((b, i) => { v2[16 + i] = b; });
+  m2.sock.write(v2);
+  m2.sock.write(JSON.stringify({ id: 1, method: 'mining.subscribe', params: ['intminer/1.0.0'] }) + '\n');
+  const s2 = await m2.waitFor(m => m.id === 1);
+  assert.ok(s2.result, 'v2 proxy header works');
+  await m2.sock.destroy();
+
+  // per-IP limit applies to the REPORTED address, not the proxy's IP
+  const m3 = await connect();
+  const m4 = await connect();
+  const m5 = await connect();
+  for (const m of [m3, m4, m5]) m.sock.write('PROXY TCP4 203.0.113.9 10.0.0.2 3333 50000\r\n');
+  await new Promise(r => setTimeout(r, 400));
+  assert.ok(m3.sock.destroyed || m4.sock.destroyed || m5.sock.destroyed, 'third same-IP connection dropped');
+  for (const m of [m3, m4, m5]) { try { m.sock.destroy(); } catch {} }
+});

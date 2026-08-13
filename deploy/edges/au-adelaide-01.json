@@ -5,7 +5,7 @@
     "name": "Adelaide region edge",
     "stratumHost": "0.0.0.0",
     "stratumPort": 3333,
-    "statsHost": "0.0.0.0",
+    "statsHost": "127.0.0.1",
     "statsPort": 8082,
     "network": "ckb"
   },
@@ -27,6 +27,7 @@
   },
   "limits": {
     "maxConnectionsPerIp": 8,
+    "proxyProtocol": false,
     "maxConnectionsTotal": 64,
     "idleTimeoutMs": 300000,
     "maxLineBytes": 65536,
