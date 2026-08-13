@@ -5,176 +5,326 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CKB Interim Pool</title>
 <style>
-  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --dim:#8b949e; --accent:#3fb950; --warn:#d29922; --danger:#f85149; }
+  :root {
+    --bg: hsl(220, 12%, 9%);
+    --card: hsl(220, 12%, 13%);
+    --card-2: hsl(220, 12%, 16%);
+    --border: hsl(220, 10%, 22%);
+    --text: hsl(220, 15%, 92%);
+    --dim: rgba(255, 255, 255, 0.6);
+    --faint: rgba(255, 255, 255, 0.4);
+    --accent: hsl(140, 62%, 46%);
+    --accent-dim: hsla(140, 62%, 46%, 0.16);
+    --warn: hsl(40, 90%, 55%);
+    --danger: hsl(0, 75%, 60%);
+    --link: hsl(210, 80%, 64%);
+    --radius: 8px;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, sans-serif; }
-  header { padding:16px 20px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; }
-  header h1 { font-size:18px; margin:0; }
-  header .tag { color:var(--warn); font-size:12px; border:1px solid var(--warn); border-radius:10px; padding:2px 8px; }
-  main { max-width:1000px; margin:0 auto; padding:20px; }
-  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; }
-  .card { background:var(--card); border:1px solid #21262d; border-radius:8px; padding:14px; }
-  .card .label { color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
-  .card .value { font-size:20px; font-weight:600; margin-top:4px; word-break:break-word; }
-  section { margin-top:24px; }
-  h2 { font-size:15px; color:var(--dim); font-weight:600; }
-  table { width:100%; border-collapse:collapse; }
-  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid #21262d; font-size:13px; }
-  th { color:var(--dim); font-weight:500; }
-  input { background:#0d1117; color:var(--fg); border:1px solid #30363d; border-radius:6px; padding:8px 10px; width:100%; font-family:ui-monospace,monospace; }
-  .muted { color:var(--dim); font-size:12px; }
-  .state { padding:1px 8px; border-radius:8px; font-size:11px; }
-  .state-MATURE,.state-CONFIRMED,.state-SETTLED_TO_LEDGER { background:#0f2d1a; color:var(--accent); }
-  .state-CANONICAL_IMMATURE,.state-NODE_ACCEPTED,.state-SUBMITTED { background:#2d250f; color:var(--warn); }
-  .state-ORPHANED,.state-NODE_REJECTED,.state-error { background:#2d1412; color:var(--danger); }
-  a { color:var(--accent); }
-  .err { color:var(--danger); }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 400 14px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* header */
+  header { padding: 16px 24px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; }
+  .brand { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+  .brand span { color: var(--dim); font-weight: 400; }
+  .tag { color: var(--warn); font-size: 12px; border: 1px solid var(--warn); border-radius: 999px; padding: 2px 10px; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .dot.down { background: var(--danger); }
+
+  /* tabs */
+  nav { display: flex; gap: 4px; padding: 12px 24px 0; }
+  .tab { background: none; border: none; color: var(--dim); font-size: 14px; font-weight: 500;
+    padding: 10px 16px; border-radius: var(--radius) var(--radius) 0 0; cursor: pointer; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); background: var(--card-2); box-shadow: inset 0 2px 0 var(--accent); }
+
+  main { max-width: 1080px; margin: 0 auto; padding: 24px; }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* stat cards */
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; }
+  .card .label { color: var(--dim); font-size: 12px; font-weight: 500; letter-spacing: 0.06em; text-transform: uppercase; }
+  .card .value { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .sub { color: var(--faint); font-size: 12px; margin-top: 2px; }
+
+  /* sections */
+  section { margin-top: 32px; }
+  h2 { font-size: 14px; font-weight: 600; color: var(--dim); letter-spacing: 0.04em;
+    text-transform: uppercase; margin: 0 0 12px; }
+
+  /* tables */
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: var(--radius); }
+  th, td { text-align: left; padding: 10px 14px; font-size: 13px; }
+  th { color: var(--dim); font-weight: 500; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  td { border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: none; }
+  tbody tr:hover { background: var(--card-2); }
+
+  /* inputs */
+  label { display: block; font-size: 14px; font-weight: 500; margin-bottom: 6px; }
+  input { width: 100%; max-width: 480px; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; font-size: 14px; font-family: inherit; }
+  input:focus { outline: 2px solid var(--accent); outline-offset: 2px; border-color: transparent; }
+
+  /* badges */
+  .state { display: inline-block; padding: 1px 10px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+  .state.ok { background: var(--accent-dim); color: var(--accent); }
+  .state.pending { background: hsla(40, 90%, 55%, 0.16); color: var(--warn); }
+  .state.bad { background: hsla(0, 75%, 60%, 0.16); color: var(--danger); }
+
+  .addr { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .muted { color: var(--dim); } .faint { color: var(--faint); }
+  .empty { padding: 24px; text-align: center; color: var(--faint); background: var(--card); border-radius: var(--radius); }
+  .err { color: var(--danger); }
+
+  canvas { width: 100%; height: 180px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); }
+  @media (max-width: 640px) { main { padding: 16px; } .cards { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
 <body>
 <header>
-  <h1>CKB Interim Pool <span class="muted">— mining status</span></h1>
-  <span class="tag">operator-custodied</span>
+  <div class="brand">CKB Interim Pool <span>— mining status</span></div>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <span class="status"><span class="dot" id="live-dot"></span><span id="live-text">connecting…</span></span>
+    <span class="tag">operator-custodied</span>
+  </div>
 </header>
+<nav>
+  <button class="tab active" data-view="pool">Pool</button>
+  <button class="tab" data-view="miner">Miner</button>
+  <button class="tab" data-view="blocks">Blocks</button>
+</nav>
 <main>
-  <section>
+
+  <section class="view active" id="view-pool">
     <div class="cards" id="pool-cards"></div>
+
+    <section>
+      <h2>Network</h2>
+      <div class="cards" id="network-cards"><div class="card"><div class="label">tip</div><div class="value">—</div></div></div>
+    </section>
+
+    <section>
+      <h2>Regions / edges</h2>
+      <table><thead><tr><th>edge</th><th>region</th><th>status</th><th>last seen</th><th>last event seq</th></tr></thead>
+      <tbody id="edges"></tbody></table>
+    </section>
+
+    <section>
+      <h2>Policy</h2>
+      <div class="card" id="policy" style="font-size:13px;color:var(--dim);"></div>
+    </section>
   </section>
 
-  <section>
-    <h2>Network</h2>
-    <div id="network" class="muted">—</div>
+  <section class="view" id="view-miner">
+    <div style="margin-bottom:24px;">
+      <label for="addr">Payout address</label>
+      <input id="addr" placeholder="ckb1qy…" autocomplete="off" spellcheck="false">
+      <p class="faint" style="font-size:12px;margin:6px 0 0;">Your address is your account — no registration needed. Workers use <span class="addr">ADDRESS.WORKER</span>.</p>
+    </div>
+    <div id="miner-view"><div class="empty">Enter a payout address to see miner statistics.</div></div>
   </section>
 
-  <section>
-    <h2>Regions / edges</h2>
-    <table><thead><tr><th>edge</th><th>region</th><th>status</th><th>last seen</th><th>last event seq</th></tr></thead>
-    <tbody id="edges"></tbody></table>
-  </section>
-
-  <section>
-    <h2>Look up a miner by payout address</h2>
-    <input id="addr" placeholder="ckb1qy…" value="">
-    <div id="miner"></div>
-    <div id="payouts"></div>
-  </section>
-
-  <section>
-    <h2>Blocks</h2>
+  <section class="view" id="view-blocks">
     <table><thead><tr><th>height</th><th>state</th><th>reward (CKB)</th><th>edge</th><th>found</th></tr></thead>
     <tbody id="blocks"></tbody></table>
   </section>
-
-  <section>
-    <h2>Policy</h2>
-    <div id="policy" class="muted"></div>
-  </section>
 </main>
-<script>
-const $ = (s) => document.querySelector(s);
-const fmtShannons = (s) => (Number(BigInt(s || 0)) / 1e8).toFixed(2);
-const fmtHash = (h) => { const n = Number(h); if (n >= 1e15) return (n/1e15).toFixed(2)+' PH/s'; if (n >= 1e12) return (n/1e12).toFixed(2)+' TH/s'; if (n >= 1e9) return (n/1e9).toFixed(2)+' GH/s'; if (n >= 1e6) return (n/1e6).toFixed(2)+' MH/s'; if (n >= 1e3) return (n/1e3).toFixed(2)+' kH/s'; return n+' H/s'; };
-const ts = (t) => t ? new Date(t).toLocaleString() : '—';
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state = (s) => `<span class="state state-${esc(s)}">${esc(s)}</span>`;
-const get = (p) => fetch(p).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
 
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const CKB = s => (Number(BigInt(s || 0)) / 1e8).toFixed(2);
+const hash = h => { const n = Number(h || 0); if (n >= 1e15) return (n/1e15).toFixed(2)+' PH/s'; if (n >= 1e12) return (n/1e12).toFixed(2)+' TH/s'; if (n >= 1e9) return (n/1e9).toFixed(2)+' GH/s'; if (n >= 1e6) return (n/1e6).toFixed(2)+' MH/s'; if (n >= 1e3) return (n/1e3).toFixed(2)+' kH/s'; return Math.round(n)+' H/s'; };
+const ts = t => t ? new Date(t).toLocaleString() : '—';
+const stateClass = s => /MATURE|CONFIRMED|SETTLED_TO_LEDGER|active/.test(s) ? 'ok' : /ORPHANED|REJECTED|INVALID|error/.test(s) ? 'bad' : 'pending';
+const state = s => `<span class="state ${stateClass(s)}">${esc(s)}</span>`;
+const get = p => fetch(p).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); });
+
+// ── live status ──────────────────────────────────────────────────────────────
+setInterval(async () => {
+  try {
+    const p = await get('/api/v1/pool');
+    $('#live-dot').className = 'dot';
+    $('#live-text').textContent = `${p.active_miners} miner${p.active_miners === 1 ? '' : 's'} · ${hash(p.hashrate_1h)}`;
+  } catch {
+    $('#live-dot').className = 'dot down';
+    $('#live-text').textContent = 'API unreachable';
+  }
+}, 10000);
+
+// ── pool view ────────────────────────────────────────────────────────────────
 async function loadPool() {
   try {
     const p = await get('/api/v1/pool');
     $('#pool-cards').innerHTML = [
-      ['Hashrate 10m', fmtHash(p.hashrate_10m)],
-      ['Hashrate 1h', fmtHash(p.hashrate_1h)],
-      ['Hashrate 24h', fmtHash(p.hashrate_24h)],
+      ['Hashrate 10m', hash(p.hashrate_10m)],
+      ['Hashrate 1h', hash(p.hashrate_1h)],
+      ['Hashrate 24h', hash(p.hashrate_24h)],
       ['Active miners', p.active_miners],
       ['Active workers', p.active_workers],
-      ['Round work', p.round_work],
+      ['Round work', Number(BigInt(p.round_work || 0)).toExponential(2)],
       ['Fee', (p.fee_bps / 100) + '%'],
-      ['Last block', p.last_block ? '#' + p.last_block.height + ' ' + state(p.last_block.state) : '—'],
+      ['Last block', p.last_block ? '#' + (p.last_block.height ?? '—') : '—'],
     ].map(([l, v]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
-  } catch (e) { $('#pool-cards').innerHTML = `<div class="card err">pool API unreachable (${esc(e.message)})</div>`; }
+    const lb = p.last_block;
+    if (lb) $('#pool-cards').innerHTML += `<div class="card"><div class="label">last block state</div><div class="value">${state(lb.state)}</div><div class="sub">${ts(lb.found_at)}</div></div>`;
+  } catch { $('#pool-cards').innerHTML = `<div class="card err">pool API unreachable</div>`; }
 }
-
 async function loadNetwork() {
   try {
     const n = await get('/api/v1/network');
-    $('#network').textContent = n.available
-      ? `tip height #${n.tip_height.toLocaleString()} · epoch ${n.epoch} · target ${n.compact_target}`
-      : 'network info unavailable (no node connected to the API)';
-  } catch { $('#network').textContent = 'network info unavailable'; }
+    $('#network-cards').innerHTML = n.available ? [
+      ['Tip height', '#' + n.tip_height.toLocaleString()],
+      ['Epoch', n.epoch],
+      ['Compact target', n.compact_target],
+    ].map(([l, v]) => `<div class="card"><div class="label">${l}</div><div class="value" style="font-size:16px;">${esc(v)}</div></div>`).join('')
+      : '<div class="card"><div class="label">network</div><div class="value">unavailable</div></div>';
+  } catch { $('#network-cards').innerHTML = '<div class="card"><div class="label">network</div><div class="value">unavailable</div></div>'; }
 }
-
 async function loadEdges() {
   try {
     const edges = await get('/api/v1/edges');
-    $('#edges').innerHTML = edges.map(e => `<tr>
-      <td>${esc(e.id)}</td><td>${esc(e.region)}</td><td>${state(e.status)}</td>
-      <td>${ts(e.last_seen_at)}</td><td>${e.last_seq ?? '—'}</td></tr>`).join('')
-      || '<tr><td colspan="5" class="muted">no edges registered yet</td></tr>';
-  } catch { $('#edges').innerHTML = '<tr><td colspan="5" class="muted err">unavailable</td></tr>'; }
+    $('#edges').innerHTML = edges.map(e => `<tr><td>${esc(e.id)}</td><td>${esc(e.region)}</td><td>${state(e.status)}</td><td>${ts(e.last_seen_at)}</td><td>${e.last_seq ?? '—'}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="faint">no edges registered yet</td></tr>';
+  } catch { $('#edges').innerHTML = '<tr><td colspan="5" class="err">unavailable</td></tr>'; }
 }
-
-async function loadBlocks() {
-  try {
-    const { blocks } = await get('/api/v1/blocks?limit=20');
-    $('#blocks').innerHTML = blocks.map(b => `<tr>
-      <td>${b.height ?? '—'}</td><td>${state(b.state)}</td>
-      <td>${b.reward_shannons ? fmtShannons(b.reward_shannons) : '—'}</td>
-      <td>${esc(b.edge_id)}</td><td>${ts(b.found_at)}</td></tr>`).join('')
-      || '<tr><td colspan="5" class="muted">no blocks yet</td></tr>';
-  } catch { $('#blocks').innerHTML = '<tr><td colspan="5" class="muted err">unavailable</td></tr>'; }
-}
-
 async function loadPolicy() {
   try {
     const p = await get('/api/v1/policy');
-    $('#policy').textContent = `Model: ${p.model} · window: ${p.pplns_window}× network · fee: ${p.fee_bps/100}% · minimum payout: ${fmtShannons(p.minimum_payout_shannons)} CKB · maturity: ${p.maturity}`;
+    $('#policy').innerHTML = `Model: ${esc(p.model)} · window: ${esc(p.pplns_window)}× network · fee: ${p.fee_bps/100}% · minimum payout: ${CKB(p.minimum_payout_shannons)} CKB · maturity: ${esc(p.maturity)}`;
   } catch { $('#policy').textContent = 'policy unavailable'; }
 }
 
+// ── blocks view ──────────────────────────────────────────────────────────────
+async function loadBlocks() {
+  try {
+    const { blocks } = await get('/api/v1/blocks?limit=50');
+    $('#blocks').innerHTML = blocks.map(b => `<tr><td>${b.height ?? '—'}</td><td>${state(b.state)}</td><td>${b.reward_shannons ? CKB(b.reward_shannons) : '—'}</td><td>${esc(b.edge_id)}</td><td>${ts(b.found_at)}</td></tr>`).join('')
+      || '<tr><td colspan="5" class="faint">no blocks yet</td></tr>';
+  } catch { $('#blocks').innerHTML = '<tr><td colspan="5" class="err">unavailable</td></tr>'; }
+}
+
+// ── miner view ───────────────────────────────────────────────────────────────
+const DIFF1 = 4294967296n;
+const diffOf = work => Number(BigInt(work) / DIFF1);
+
 async function loadMiner(addr) {
-  const el = $('#miner');
-  if (!addr) { el.innerHTML = ''; return; }
+  const host = $('#miner-view');
+  if (!addr) { host.innerHTML = '<div class="empty">Enter a payout address to see miner statistics.</div>'; return; }
   try {
-    const r = await fetch(`/api/v1/miners/${encodeURIComponent(addr)}`);
-    if (r.status === 404) { el.innerHTML = '<p class="muted">unknown address</p>'; return; }
-    if (!r.ok) throw new Error(r.status);
-    const m = await r.json();
-    const bal = m.balances;
-    el.innerHTML = `
-      <h2>Balances <span class="muted">(shannons)</span></h2>
-      <table><thead><tr><th>immature</th><th>confirmed</th><th>pending payout</th><th>paid</th></tr></thead>
-      <tbody><tr><td>${bal.immature}</td><td>${bal.confirmed}</td><td>${bal.pending_payout}</td><td>${bal.paid}</td></tr></tbody></table>
-      <h2>Stats <span class="muted">(${fmtShannons(m.stats.work)} CKB-work total)</span></h2>
-      <table><thead><tr><th>shares</th><th>work (all time)</th><th>work (1h)</th></tr></thead>
-      <tbody><tr><td>${m.stats.shares}</td><td>${m.stats.work}</td><td>${m.stats.work_1h}</td></tr></tbody></table>
-      <h2>Workers</h2>
-      <table><thead><tr><th>worker</th><th>shares</th><th>last share</th></tr></thead>
-      <tbody>${m.workers.map(w => `<tr><td>${esc(w.worker_name)}</td><td>${w.shares}</td><td>${ts(w.last_share_at)}</td></tr>`).join('')}</tbody></table>`;
-    loadMinerPayouts(addr);
-  } catch (e) { el.innerHTML = `<p class="err">lookup failed (${esc(e.message)})</p>`; }
+    const m = await get(`/api/v1/miners/${encodeURIComponent(addr)}`);
+    const b = m.balances, s = m.stats;
+    const hr10 = Number(BigInt(s.work_10m)) / 600, hr1 = Number(BigInt(s.work_1h)) / 3600, hr24 = Number(BigInt(s.work_24h)) / 86400;
+    host.innerHTML = `
+      <div style="margin-bottom:16px;"><span class="addr">${esc(m.address)}</span>
+        <span class="faint" style="font-size:12px;"> · first seen ${ts(m.first_seen_at)}</span></div>
+      <div class="cards">
+        ${[['Hashrate 10m', hash(hr10)], ['Hashrate 1h', hash(hr1)], ['Hashrate 24h', hash(hr24)],
+          ['Shares', s.shares], ['Immature', CKB(b.immature) + ' CKB'], ['Confirmed', CKB(b.confirmed) + ' CKB'],
+          ['Pending payout', CKB(b.pending_payout) + ' CKB'], ['Paid', CKB(b.paid) + ' CKB'],
+        ].map(([l, v]) => `<div class="card"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('')}
+      </div>
+      <section><h2>Hashrate — last 24h</h2><canvas id="hr-chart"></canvas></section>
+      <section><h2>Workers</h2><div id="workers"></div></section>
+      <section><h2>Recent shares</h2><div id="shares"></div></section>
+      <section><h2>Payout history</h2><div id="payouts"></div></section>
+      <section><h2>Blocks found</h2><div id="mblocks"></div></section>`;
+    loadChart(addr); loadWorkers(addr); loadShares(addr); loadPayouts(addr); loadMinerBlocks(addr);
+  } catch (e) {
+    host.innerHTML = e.message.includes('404')
+      ? '<div class="empty">No miner found for that address — it appears once the first share is accepted.</div>'
+      : `<div class="empty err">lookup failed (${esc(e.message)})</div>`;
+  }
 }
 
-async function loadMinerPayouts(addr) {
-  const host = document.getElementById('payouts');
-  if (!host) return;
+async function loadChart(addr) {
+  const canvas = $('#hr-chart');
+  if (!canvas) return;
   try {
-    const payouts = await get(`/api/v1/miners/${encodeURIComponent(addr)}/payouts`);
-    host.innerHTML = '<h2>Payout history</h2>' + (payouts.length
-      ? `<table><thead><tr><th>batch</th><th>state</th><th>amount (shannons)</th><th>tx</th><th>broadcast</th></tr></thead>
-         <tbody>${payouts.map(p => `<tr><td>${esc(p.batch_id.slice(0, 8))}…</td><td>${state(p.state)}</td>
-           <td>${p.amount_shannons}</td><td class="muted">${esc((p.tx_hash || '').slice(0, 16))}…</td>
-           <td>${ts(p.broadcast_at)}</td></tr>`).join('')}</tbody></table>`
-      : '<p class="muted">no payouts yet</p>');
-  } catch { host.innerHTML = '<p class="muted">payout history unavailable</p>'; }
+    const rows = await get(`/api/v1/miners/${encodeURIComponent(addr)}/hashrate-window?hours=24`);
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    canvas.width = w * dpr; canvas.height = h * dpr;
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, w, h);
+    const work = rows.map(r => Number(BigInt(r.work)) / 3600);   // H/s per hour
+    const max = Math.max(...work, 1);
+    const bw = w / Math.max(work.length, 1);
+    ctx.fillStyle = 'hsl(140, 62%, 46%)';
+    work.forEach((v, i) => {
+      const bh = (v / max) * (h - 20);
+      ctx.fillRect(i * bw + 2, h - bh - 8, Math.max(bw - 4, 1), bh);
+    });
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '10px monospace';
+    ctx.fillText(hash(max) + ' peak', 4, 12);
+    ctx.fillText(hash(work.reduce((a, b) => a + b, 0) / Math.max(work.length, 1)) + ' avg', 4, h - 2);
+  } catch { /* chart silently degrades */ }
 }
 
-let t = null;
-$('#addr').addEventListener('input', (e) => {
-  clearTimeout(t);
-  t = setTimeout(() => loadMiner(e.target.value.trim()), 400);
+async function loadWorkers(addr) {
+  try {
+    const rows = await get(`/api/v1/miners/${encodeURIComponent(addr)}/workers`);
+    $('#workers').innerHTML = rows.length
+      ? `<table><thead><tr><th>worker</th><th>hashrate 1h</th><th>hashrate 24h</th><th>shares</th><th>last share</th></tr></thead>
+         <tbody>${rows.map(w => `<tr><td>${esc(w.worker_name)}</td><td>${hash(Number(BigInt(w.work_1h)) / 3600)}</td><td>${hash(Number(BigInt(w.work_24h)) / 86400)}</td><td>${w.shares}</td><td>${ts(w.last_share_at)}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty">no workers yet</div>';
+  } catch { $('#workers').innerHTML = '<div class="empty err">unavailable</div>'; }
+}
+
+async function loadShares(addr) {
+  try {
+    const rows = await get(`/api/v1/miners/${encodeURIComponent(addr)}/shares?window=24h`);
+    $('#shares').innerHTML = rows.length
+      ? `<table><thead><tr><th>time</th><th>worker</th><th>difficulty</th><th>work</th><th>block?</th></tr></thead>
+         <tbody>${rows.slice(0, 50).map(s => `<tr><td>${ts(s.accepted_at)}</td><td>${esc(s.worker_name)}</td><td>${diffOf(s.work_units).toLocaleString()}</td><td>${s.work_units}</td><td>${s.is_block_candidate ? state('block candidate') : '—'}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty">no shares in the last 24h</div>';
+  } catch { $('#shares').innerHTML = '<div class="empty err">unavailable</div>'; }
+}
+
+async function loadPayouts(addr) {
+  try {
+    const rows = await get(`/api/v1/miners/${encodeURIComponent(addr)}/payouts`);
+    $('#payouts').innerHTML = rows.length
+      ? `<table><thead><tr><th>batch</th><th>state</th><th>amount (CKB)</th><th>tx</th><th>broadcast</th></tr></thead>
+         <tbody>${rows.map(p => `<tr><td class="addr">${esc(p.batch_id.slice(0, 8))}…</td><td>${state(p.state)}</td><td>${CKB(p.amount_shannons)}</td><td class="addr faint">${esc((p.tx_hash || '').slice(0, 16))}…</td><td>${ts(p.broadcast_at)}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty">no payouts yet</div>';
+  } catch { $('#payouts').innerHTML = '<div class="empty err">unavailable</div>'; }
+}
+
+async function loadMinerBlocks(addr) {
+  try {
+    const rows = await get(`/api/v1/miners/${encodeURIComponent(addr)}/blocks`);
+    $('#mblocks').innerHTML = rows.length
+      ? `<table><thead><tr><th>height</th><th>state</th><th>reward (CKB)</th><th>found</th></tr></thead>
+         <tbody>${rows.map(b => `<tr><td>${b.height ?? '—'}</td><td>${state(b.state)}</td><td>${b.reward_shannons ? CKB(b.reward_shannons) : '—'}</td><td>${ts(b.found_at)}</td></tr>`).join('')}</tbody></table>`
+      : '<div class="empty">no blocks found by this miner yet</div>';
+  } catch { $('#mblocks').innerHTML = '<div class="empty err">unavailable</div>'; }
+}
+
+// ── wiring ───────────────────────────────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  t.classList.add('active');
+  $('#view-' + t.dataset.view).classList.add('active');
+  if (t.dataset.view === 'blocks') loadBlocks();
+}));
+let timer = null;
+$('#addr').addEventListener('input', e => {
+  clearTimeout(timer);
+  timer = setTimeout(() => loadMiner(e.target.value.trim()), 400);
 });
-loadPool(); loadNetwork(); loadEdges(); loadBlocks(); loadPolicy();
+loadPool(); loadNetwork(); loadEdges(); loadPolicy(); loadBlocks(); loadMiner($('#addr').value.trim());
 setInterval(() => { loadPool(); loadNetwork(); loadEdges(); loadBlocks(); }, 15000);
 </script>
 </body>

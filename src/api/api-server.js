@@ -110,8 +110,11 @@ function createApiServer({ db, policy = {}, nodeRpc = null, logger = console }) 
           return out;
         })(),
         db.query(
-          `SELECT count(*)::int shares, COALESCE(sum(work_units),0)::text work,
-                  COALESCE(sum(work_units) FILTER (WHERE accepted_at > now() - interval '1 hour'),0)::text work_1h
+          `SELECT count(*)::int shares,
+                  COALESCE(sum(work_units),0)::text work,
+                  COALESCE(sum(work_units) FILTER (WHERE accepted_at > now() - interval '10 minutes'),0)::text work_10m,
+                  COALESCE(sum(work_units) FILTER (WHERE accepted_at > now() - interval '1 hour'),0)::text work_1h,
+                  COALESCE(sum(work_units) FILTER (WHERE accepted_at > now() - interval '24 hours'),0)::text work_24h
            FROM share_events WHERE miner_id = $1`,
           [m.id],
         ),
@@ -133,10 +136,37 @@ function createApiServer({ db, policy = {}, nodeRpc = null, logger = console }) 
       const addr = req.params.address;
       const rows = (await db.query(
         `SELECT w.worker_name, count(s.id)::int shares, COALESCE(sum(s.work_units),0)::text work,
+                COALESCE(sum(s.work_units) FILTER (WHERE s.accepted_at > now() - interval '1 hour'),0)::text work_1h,
+                COALESCE(sum(s.work_units) FILTER (WHERE s.accepted_at > now() - interval '24 hours'),0)::text work_24h,
                 max(s.accepted_at) last_share_at
          FROM miners m JOIN workers w ON w.miner_id = m.id
          LEFT JOIN share_events s ON s.worker_id = w.id
          WHERE m.payout_address = $1 GROUP BY w.worker_name ORDER BY w.worker_name`,
+        [addr],
+      )).rows;
+      return json(res, 200, rows);
+    },
+
+    async 'GET /api/v1/miners/:address/hashrate-window'(req, res) {
+      const addr = req.params.address;
+      const hours = Math.min(Math.max(parseInt(req.query.hours || '24', 10), 1), 168);
+      const rows = (await db.query(
+        `SELECT to_char(date_trunc('hour', s.accepted_at), 'YYYY-MM-DD"T"HH24:00:00"Z"') AS hour,
+                COALESCE(sum(s.work_units),0)::text work
+         FROM share_events s JOIN miners m ON m.id = s.miner_id
+         WHERE m.payout_address = $1 AND s.accepted_at > now() - make_interval(hours => $2)
+         GROUP BY 1 ORDER BY 1`,
+        [addr, hours],
+      )).rows;
+      return json(res, 200, rows);
+    },
+
+    async 'GET /api/v1/miners/:address/blocks'(req, res) {
+      const addr = req.params.address;
+      const rows = (await db.query(
+        `SELECT block_hash, height, state, reward_shannons, found_at, matured_at
+         FROM blocks b JOIN miners m ON m.id = b.miner_id
+         WHERE m.payout_address = $1 ORDER BY found_at DESC NULLS LAST LIMIT 50`,
         [addr],
       )).rows;
       return json(res, 200, rows);

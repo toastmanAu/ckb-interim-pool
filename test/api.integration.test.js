@@ -72,9 +72,17 @@ test('public API: pool, miner, policy endpoints', { timeout: 60000, skip: !dbRea
   const miner = await get(`/api/v1/miners/${ADDR}`);
   assert.strictEqual(miner.balances.confirmed, '123456789012');
   assert.strictEqual(miner.stats.shares, 3);
+  assert.ok('work_10m' in miner.stats && 'work_24h' in miner.stats, 'work windows present');
   assert.strictEqual(miner.workers.length, 1);
   assert.ok(!('sessions' in miner), 'no internal session data exposed');
-  assert.strictEqual((await get(`/api/v1/miners/${ADDR}/workers`)).length, 1);
+  const workers = await get(`/api/v1/miners/${ADDR}/workers`);
+  assert.strictEqual(workers.length, 1);
+  assert.ok('work_1h' in workers[0] && 'work_24h' in workers[0], 'per-worker hashrate fields');
+  const win = await get(`/api/v1/miners/${ADDR}/hashrate-window?hours=24`);
+  assert.ok(Array.isArray(win) && win.length >= 1, 'hourly work window');
+  assert.match(win[0].hour, /^\d{4}-\d{2}-\d{2}T\d{2}:00:00Z$/);
+  const mblocks = await get(`/api/v1/miners/${ADDR}/blocks`);
+  assert.ok(Array.isArray(mblocks), 'miner blocks endpoint');
   assert.strictEqual((await get(`/api/v1/miners/${ADDR}/shares?window=1h`)).length, 3);
   assert.strictEqual((await get(`/api/v1/miners/${'ckb1qyqinvalid'}`)).error, 'unknown miner');
   assert.strictEqual((await get('/api/v1/policy')).fee_bps, 100);

@@ -289,6 +289,24 @@ without the dev node).
   Read-only + audit; payouts remain on the timer/CLI (spec 05 §7).
   `test/admin.integration.test.js` covers auth + endpoints.
 
+## Miner-facing dashboard v2 + session hygiene
+
+- **Dashboard v2** (served at `/`): tabbed views (Pool / Miner / Blocks) with
+  a proper design system (8pt scale, HSL dark palette, two-weight type,
+  semantic state badges). Pool: hashrate cards + live status pill + network
+  strip + edges + policy. Miner: address lookup (labeled input), hashrate
+  10m/1h/24h, balances in CKB, **24h hourly hashrate canvas chart**,
+  per-worker hashrate (1h/24h), recent shares with difficulty, payout
+  history, blocks found. API additions: miner work windows (10m/24h),
+  per-worker work windows, `hashrate-window` hourly aggregation, miner
+  blocks.
+- **Session hygiene finding**: integration tests seed rows into the same
+  test DB the live stack uses — a leftover MATURE test block was picked up
+  by the live block-service and allocated (junk). Fixed: allocator now
+  skips template-less blocks (reverts the guard, logs, keeps MATURE for
+  investigation); run `node -e` cleanup after tests. Longer term the tests
+  should use a dedicated database.
+
 ## Remaining gates (not done in this session — ops/deployment)
 
 - Real K7/GodMiner + Goldshell hardware soak (10:00–13:00 window tomorrow);

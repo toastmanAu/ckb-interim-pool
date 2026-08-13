@@ -76,6 +76,13 @@ async function allocateMatureBlock(db, { blockId, windowNum = 2, windowDen = 1, 
   const netRes = await db.query(`SELECT template_json FROM blocks WHERE id = $1`, [blockId]);
   const template = typeof netRes.rows[0].template_json === 'string'
     ? JSON.parse(netRes.rows[0].template_json) : netRes.rows[0].template_json;
+  if (!template || !template.compact_target) {
+    // defensive: never allocate from a template-less block (e.g. test seed
+    // rows) — revert the guard so the block stays MATURE for investigation
+    await db.query(`UPDATE blocks SET state = 'MATURE' WHERE id = $1`, [blockId]);
+    logger.log('ALLOC', `block ${String(blockId).slice(0, 8)} has no template_json — allocation skipped (needs investigation)`);
+    return { allocated: false };
+  }
   const networkTargetLE = compactToTargetLE(parseInt(template.compact_target, 16));
   const networkWork = targetLEToWorkUnits(networkTargetLE).toString();
 
