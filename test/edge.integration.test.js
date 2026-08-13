@@ -430,10 +430,11 @@ test('block submitter: minimal hex parse-rule form, value-preserving (uints.rs)'
     const value = BigInt(submitted);
     const le = Buffer.alloc(16);
     for (let i = 0; i < 16; i++) le[i] = Number((value >> BigInt(8 * i)) & 0xffn);
-    assert.strictEqual(le.toString('hex'), rawN, `LE(value(${submitted})) == ${rawN}`);
+    const padded = rawN.padStart(32, '0');
+    assert.strictEqual(le.toString('hex'), padded, `LE(value(${submitted})) == ${padded}`);
     // and the serialized header nonce region carries exactly those bytes
     const serialized = serializeFullHeader(f, submitted);
-    assert.strictEqual(serialized.subarray(192, 208).toString('hex'), rawN);
+    assert.strictEqual(serialized.subarray(192, 208).toString('hex'), padded);
   }
 });
 
