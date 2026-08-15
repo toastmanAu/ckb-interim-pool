@@ -71,3 +71,94 @@ function matchReceipt({ blockHeight, cellbaseWitness, payoutBlock }) {
 }
 
 module.exports = { matchReceipt, REWARD_DELAY_BLOCKS, CELLBASE_MATURITY_EPOCHS };
+
+/**
+ * Persistent reconciliation over the `blocks` table.
+ *
+ * Rules, all of them lessons from 2026-08-14/15:
+ *  - a null or failed lookup records nothing (missing evidence is not a zero);
+ *  - a receipt confirms only once its payout block is `confirmations` deep;
+ *  - if the payout block's cellbase tx hash changes before confirmation, the
+ *    receipt is voided rather than confirmed.
+ */
+function createReconciler({ db, rpcClient, confirmations = 20, logger = console }) {
+  const hx = n => '0x' + BigInt(n).toString(16);
+
+  async function blockAt(height) {
+    try { return await rpcClient.rpc('get_block_by_number', [hx(height)]); }
+    catch (e) { logger.log('WALLET', `get_block_by_number(${height}) failed: ${e.message}`); return null; }
+  }
+
+  async function reconcileBlock(row, tipHeight) {
+    const height = parseInt(row.height, 10);
+    const payoutHeight = height + REWARD_DELAY_BLOCKS;
+    if (payoutHeight > tipHeight) return;                    // not paid yet
+
+    const mined = await blockAt(height);
+    const witness = mined?.transactions?.[0]?.witnesses?.[0];
+    if (!witness) { logger.log('WALLET', `block ${height}: no cellbase witness yet`); return; }
+
+    const payout = await blockAt(payoutHeight);
+    if (!payout?.transactions?.[0]) {
+      logger.log('WALLET', `block ${height}: payout block ${payoutHeight} not available`);
+      return;
+    }
+
+    let receipt;
+    try { receipt = matchReceipt({ blockHeight: height, cellbaseWitness: witness, payoutBlock: payout }); }
+    catch (e) { logger.log('WALLET', `block ${height}: ${e.message}`); return; }
+    if (!receipt) { logger.log('WALLET', `block ${height}: no output pays our lock`); return; }
+
+    const deep = tipHeight - payoutHeight >= confirmations;
+
+    const existing = (await db.query(
+      'SELECT id, payout_tx_hash, confirmed_at, voided_at FROM treasury_receipts WHERE block_id = $1',
+      [row.id])).rows[0];
+
+    if (!existing) {
+      await db.query(
+        `INSERT INTO treasury_receipts
+           (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
+            lock_args, amount_shannons, mature_at_epoch, confirmed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9 THEN now() ELSE NULL END)
+         ON CONFLICT (block_id) DO NOTHING`,
+        [row.id, height, receipt.payoutBlockHeight, receipt.payoutTxHash, receipt.outputIndex,
+         receipt.lockArgs, receipt.amountShannons, receipt.matureAtEpoch, deep]);
+      logger.log('WALLET', `block ${height}: receipt ${receipt.amountShannons} shannons from ${payoutHeight}${deep ? ' (confirmed)' : ''}`);
+      return;
+    }
+
+    if (existing.confirmed_at || existing.voided_at) return;   // settled already
+
+    if (existing.payout_tx_hash !== receipt.payoutTxHash) {
+      await db.query('UPDATE treasury_receipts SET voided_at = now() WHERE id = $1', [existing.id]);
+      logger.log('WALLET', `block ${height}: payout block ${payoutHeight} changed — receipt VOIDED`);
+      return;
+    }
+    if (deep) {
+      await db.query('UPDATE treasury_receipts SET confirmed_at = now() WHERE id = $1', [existing.id]);
+      logger.log('WALLET', `block ${height}: receipt confirmed`);
+    }
+  }
+
+  async function tick() {
+    const tip = await rpcClient.rpc('get_tip_header', []);
+    const tipHeight = parseInt(tip?.number, 16);
+    if (!Number.isFinite(tipHeight)) {
+      logger.log('WALLET', `unusable tip header (number=${tip?.number}) — skipping tick`);
+      return;
+    }
+    const { rows } = await db.query(
+      `SELECT b.id, b.height FROM blocks b
+         LEFT JOIN treasury_receipts r ON r.block_id = b.id
+        WHERE b.height IS NOT NULL
+          AND b.state IN ('CANONICAL_IMMATURE','MATURE','ALLOCATED','SETTLED_TO_LEDGER')
+          AND (r.id IS NULL OR (r.confirmed_at IS NULL AND r.voided_at IS NULL))
+        ORDER BY b.height`);
+    for (const row of rows) await reconcileBlock(row, tipHeight);
+  }
+
+  return { tick, reconcileBlock };
+}
+
+module.exports.createReconciler = createReconciler;

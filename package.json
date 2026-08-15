@@ -16,7 +16,7 @@
     "ingest": "node src/accounting/ingest.js",
     "api": "node src/api/main.js",
     "payout": "node src/payout/main.js",
-    "test:db": "node --test --test-concurrency=1 --test-force-exit test/accounting.integration.test.js test/api.integration.test.js test/admin.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js test/treasury-schema.test.js"
+    "test:db": "node --test --test-concurrency=1 --test-force-exit test/accounting.integration.test.js test/api.integration.test.js test/admin.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js test/treasury-schema.test.js test/reconciler-db.test.js"
   },
   "dependencies": {
     "ajv": "^8.20.0",
