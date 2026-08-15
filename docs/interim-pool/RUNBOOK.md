@@ -21,6 +21,15 @@ credentials so they can split later).
 
 ## 2. Startup order
 
+0. One-off, before the first `pool-wallet` start — the unit runs as its own
+   unprivileged user and nothing creates it:
+
+   ```
+   useradd --system --no-create-home --shell /usr/sbin/nologin pool-wallet
+   ```
+
+   It needs read access to the repo at `/opt/wyltek-pool` and nothing else:
+   no keys, no write path to the payout host.
 1. PostgreSQL → `deploy/pg-test.sh` (dev) or the prod instance; migrations
    run automatically by the ingest unit.
 2. NATS (TLS) → `deploy/nats-server.conf` with certs from
@@ -30,15 +39,37 @@ credentials so they can split later).
 4. Edges: `systemctl start pool-edge@<region>` — first edge creates the
    `POOL_V1` stream.
 5. API: `systemctl start pool-api`.
-6. Payout: `systemctl enable --now pool-payout.timer` (hourly; dry-run mode
+6. Wallet: `systemctl start pool-wallet` — treasury reconciliation.
+   **Allocation depends on this service.** A CKB cellbase pays the miner of
+   N−11, so the pool's income is only known once the reconciler has matched
+   block H's cellbase witness against the payout in H+11 and written a
+   confirmed `treasury_receipts` row; `allocator.js` credits miners from
+   that row and from nothing else. With `pool-wallet` down, found blocks sit
+   in `MATURE` and no miner is ever credited — silently, unless the
+   `WalletReconcilerStalled` / `WalletDown` alerts are wired up
+   (`deploy/prometheus/`). It holds no signing key and cannot move funds.
+7. Payout: `systemctl enable --now pool-payout.timer` (hourly; dry-run mode
    until the testnet drill passes).
 
 Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
-(api), `curl localhost:8082/health` (edge).
+(api), `curl localhost:8082/health` (edge), `curl localhost:9102/health`
+(wallet — `signing:false` is expected and required).
 
 ## 3. Daily checks
 
 - `poolctl ledger verify` — conservation across every allocated block.
+- `poolctl wallet status` — reconciliation is keeping up.
+  `blocks_awaiting_reconciliation` should be small and falling (it counts
+  every block the reconciler still owes work on, immature ones included);
+  a non-zero `blocks_with_voided_receipts` that does not clear means a
+  payout was withdrawn by a reorg and no replacement has been found — check
+  that block's H+11 cellbase against our lock.
+  `lifetime_income_covers_current_liabilities` is NOT a solvency check: it
+  compares lifetime confirmed income against current liabilities, so it
+  cannot fall once payouts have run. The on-chain balance check arrives with
+  the indexer client (Plan 2).
+- `deploy/check-stale.sh` — every service on the deployed commit (covers
+  ingest :9101 and wallet :9102).
 - `poolctl events replay-status` — per-edge ingestion counts.
 - Edge `/health` — `node_healthy` true, template age < 5min.
 - Reject/stale rates on the dashboard vs baseline.
@@ -74,6 +105,21 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
    the node (`get_transaction`) BEFORE anything else; recovery never
    re-sends a broadcast amount.
 4. Escalate manually only with an `adjustment` ledger entry + reason.
+
+### Allocation stopped (blocks stuck MATURE)
+1. `poolctl wallet status` — is `blocks_awaiting_reconciliation` growing?
+2. `systemctl status pool-wallet`; `curl localhost:9102/metrics | grep ticks`.
+   No ticks means the node RPC or PostgreSQL is unreachable — the service
+   retries forever and records nothing rather than guessing an amount.
+3. `poolctl wallet receipts <height>` — a `voided_at` row means the payout
+   block changed (reorg at H+11). The reconciler records a replacement on a
+   later tick and the block becomes allocatable again; nothing manual is
+   needed unless it stays stuck.
+4. A log line reading `NOT our block, recording nothing` means the chain
+   serves a different block at that height than we recorded: the block was
+   reorged out after being marked canonical. Verify with
+   `poolctl block show <hash>` before any correction — never re-credit on a
+   height whose block is not ours.
 
 ### Found block never becomes canonical
 - `poolctl block show <hash>`; if `ORPHANED` no credits were posted (by

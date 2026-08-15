@@ -218,7 +218,10 @@ Bugs found and fixed during the rehearsal:
   both. NATS 2.10 maps the client cert CN via the SAN DNS entry.
 - **systemd units** (`deploy/systemd/`): pool-ingest, pool-api,
   pool-payout.service+timer (hourly), pool-edge@.service (one instance per
-  region config) — hardened (NoNewPrivileges, ProtectSystem, memory caps).
+  region config), pool-wallet (treasury reconciliation, `User=pool-wallet` —
+  create the system user before first start, see RUNBOOK §2.0; allocation
+  depends on this unit running) — hardened (NoNewPrivileges, ProtectSystem,
+  memory caps).
 - **Metrics + alerts**: ingest now exposes Prometheus /metrics + /health
   (applied/duplicate/invalid/gaps/db_errors/consumed); edge gained
   `vardiff_changes_total` + spool capacity gauges; `deploy/prometheus/`

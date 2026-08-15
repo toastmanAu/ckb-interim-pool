@@ -95,6 +95,22 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
     if (payoutHeight > tipHeight) return;                    // not paid yet
 
     const mined = await blockAt(height);
+    // WHICH BLOCK is at H has to be settled before WHICH LOCK its witness
+    // names. The tracker proves canonicality on the way into
+    // CANONICAL_IMMATURE and never re-checks after that, and promotion can
+    // happen at depth 0 — so a 1-block reorg immediately after our block
+    // lands leaves a permanently stale row. Reading that height's witness
+    // then names the REPLACEMENT miner's lock, matches his output in H+11,
+    // and records his reward as ours. Both reads are internally consistent,
+    // so nothing downstream notices. `blocks.block_hash` is our own recorded
+    // evidence of which block we mined; disagreement is not reconcilable
+    // here, it is an incident.
+    if (row.block_hash && mined?.header?.hash !== row.block_hash) {
+      logger.log('WALLET',
+        `block ${height}: chain serves ${mined?.header?.hash || '(no block)'} but we recorded ` +
+        `${row.block_hash} — NOT our block, recording nothing (NEEDS INVESTIGATION)`);
+      return;
+    }
     const witness = mined?.transactions?.[0]?.witnesses?.[0];
     if (!witness) { logger.log('WALLET', `block ${height}: no cellbase witness yet`); return; }
 
@@ -111,8 +127,11 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
 
     const deep = tipHeight - payoutHeight >= confirmations;
 
+    // Only the LIVE receipt is relevant: a voided row is history, and
+    // migration 005 lets a fresh receipt supersede it (see below).
     const existing = (await db.query(
-      'SELECT id, payout_tx_hash, confirmed_at, voided_at FROM treasury_receipts WHERE block_id = $1',
+      `SELECT id, payout_tx_hash, confirmed_at FROM treasury_receipts
+        WHERE block_id = $1 AND voided_at IS NULL`,
       [row.id])).rows[0];
 
     if (!existing) {
@@ -122,14 +141,15 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
              (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
               lock_args, amount_shannons, mature_at_epoch, confirmed_at)
            VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9 THEN now() ELSE NULL END)
-           ON CONFLICT (block_id) DO NOTHING`,
+           ON CONFLICT (block_id) WHERE voided_at IS NULL DO NOTHING`,
           [row.id, height, receipt.payoutBlockHeight, receipt.payoutTxHash, receipt.outputIndex,
            receipt.lockArgs, receipt.amountShannons, receipt.matureAtEpoch, deep]);
       } catch (e) {
-        // 23505 = unique_violation. The schema carries a SECOND unique key,
-        // (payout_tx_hash, output_index), which ON CONFLICT (block_id) does not
-        // cover: two overlapping ticks can both read `existing` as null and both
-        // insert. The loser must be a no-op, not an exception that aborts the pass.
+        // 23505 = unique_violation. The schema carries a SECOND unique index,
+        // (payout_tx_hash, output_index) over live rows, which ON CONFLICT
+        // (block_id) does not cover: two overlapping ticks can both read
+        // `existing` as null and both insert. The loser must be a no-op, not an
+        // exception that aborts the pass.
         if (e.code !== '23505') throw e;
         logger.log('WALLET', `block ${height}: receipt already recorded by a concurrent pass`);
         return;
@@ -138,7 +158,11 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
       return;
     }
 
-    if (existing.confirmed_at || existing.voided_at) return;   // settled already
+    // settled already. Unreachable from tick() — its work set excludes blocks
+    // that already hold a confirmed, un-voided receipt — so this guard is
+    // reached only by a direct reconcileBlock() call (an operator tool, or a
+    // future caller). It is not what makes any tick() test pass.
+    if (existing.confirmed_at) return;
 
     if (existing.payout_tx_hash !== receipt.payoutTxHash) {
       await db.query('UPDATE treasury_receipts SET voided_at = now() WHERE id = $1', [existing.id]);
@@ -158,12 +182,23 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
       logger.log('WALLET', `unusable tip header (number=${tip?.number}) — skipping tick`);
       return;
     }
+    // A block is work until it holds a CONFIRMED, un-voided receipt. Stated
+    // as NOT EXISTS rather than a LEFT JOIN filter for two reasons: a block
+    // may now carry several receipt rows (voided history plus at most one
+    // live row), which a join would emit repeatedly; and a block whose only
+    // receipt is VOIDED must come back into the work set — otherwise one
+    // ordinary reorg at H+11 strands a real reward forever (the void is
+    // terminal, `voided_at` is never cleared, and no replacement could be
+    // inserted). `block_hash` comes along so reconcileBlock can prove the
+    // chain still serves OUR block at that height.
     const { rows } = await db.query(
-      `SELECT b.id, b.height FROM blocks b
-         LEFT JOIN treasury_receipts r ON r.block_id = b.id
+      `SELECT b.id, b.height, b.block_hash FROM blocks b
         WHERE b.height IS NOT NULL
           AND b.state IN ('CANONICAL_IMMATURE','MATURE','ALLOCATED','SETTLED_TO_LEDGER')
-          AND (r.id IS NULL OR (r.confirmed_at IS NULL AND r.voided_at IS NULL))
+          AND NOT EXISTS (
+            SELECT 1 FROM treasury_receipts r
+             WHERE r.block_id = b.id
+               AND r.confirmed_at IS NOT NULL AND r.voided_at IS NULL)
         ORDER BY b.height`);
     for (const row of rows) {
       try {

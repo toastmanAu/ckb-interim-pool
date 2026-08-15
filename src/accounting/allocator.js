@@ -70,6 +70,26 @@ async function rewardForBlock(db, blockId) {
  * block is not MATURE or was already allocated.
  */
 async function allocateMatureBlock(db, { blockId, windowNum = 2, windowDen = 1, feeBps = 100, logger = console }) {
+  // Read the receipt BEFORE taking the guard. Taking MATURE → ALLOCATED and
+  // then reverting it are two statements outside a transaction: a crash
+  // between them leaves the block ALLOCATED with no allocation rows and no
+  // ledger entries, and nothing can recover it because the guard demands
+  // MATURE. block-service.js runs this every 15s for every MATURE block, so a
+  // block waiting on its receipt takes and reverts the guard indefinitely —
+  // the window is open constantly, not rarely.
+  //
+  // Reading first is safe rather than trading the crash window for a
+  // read-then-guard race: a confirmed receipt is immutable (the reconciler
+  // returns early on any settled row, so a confirmed receipt is never later
+  // voided), so the amount read here cannot change under the guard.
+  const rewardShannonsStr = await rewardForBlock(db, blockId);
+  if (rewardShannonsStr === null) {
+    // income not yet verified on chain — the block stays MATURE, untouched
+    logger.log('ALLOC', `block ${String(blockId).slice(0, 8)} awaiting treasury receipt`);
+    return { allocated: false, reason: 'awaiting-receipt' };
+  }
+  const reward = BigInt(rewardShannonsStr);
+
   // single-writer guard: MATURE → ALLOCATED
   const guard = await db.query(
     `UPDATE blocks SET state = 'ALLOCATED'
@@ -79,15 +99,6 @@ async function allocateMatureBlock(db, { blockId, windowNum = 2, windowDen = 1, 
   );
   if (guard.rowCount === 0) return { allocated: false };
   const block = guard.rows[0];
-
-  const rewardShannonsStr = await rewardForBlock(db, blockId);
-  if (rewardShannonsStr === null) {
-    // income not yet verified on chain — revert the guard and try again later
-    await db.query(`UPDATE blocks SET state = 'MATURE' WHERE id = $1`, [blockId]);
-    logger.log('ALLOC', `block ${String(blockId).slice(0, 8)} awaiting treasury receipt`);
-    return { allocated: false, reason: 'awaiting-receipt' };
-  }
-  const reward = BigInt(rewardShannonsStr);
 
   // canonical share order (spec 07 §9): accepted_at, edge_id, boot_id, edge_seq
   const sharesRes = await db.query(

@@ -22,6 +22,14 @@ scrape_configs:
     static_configs:
       - targets: ["central-host:9101"]
 
+  # treasury reconciliation (src/wallet/main.js). Allocation now WAITS on this
+  # service's receipts, so a reconciler nobody scrapes is a silent halt to
+  # miner credit — and without pool_build_info here, ServiceBuildStale cannot
+  # see it either.
+  - job_name: pool-wallet
+    static_configs:
+      - targets: ["central-host:9102"]
+
   - job_name: pool-nats
     static_configs:
       - targets: ["central-host:8222"]

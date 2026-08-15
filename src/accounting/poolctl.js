@@ -199,28 +199,73 @@ async function cmdEvents(db) {
   console.log(JSON.stringify({ per_edge: perEdge }, null, 2));
 }
 
+/**
+ * `poolctl wallet status` — the reconciler's own view of its work, plus the
+ * one liability comparison this plan can actually make.
+ *
+ * Exported so the counts can be tested: an operator check that prints 0 while
+ * a block is permanently stuck is worse than no check at all.
+ */
+async function walletStatus(db) {
+  const r = (await db.query(
+    `SELECT count(*)::int total,
+            count(*) FILTER (WHERE confirmed_at IS NOT NULL AND voided_at IS NULL)::int confirmed,
+            count(*) FILTER (WHERE confirmed_at IS NULL AND voided_at IS NULL)::int pending,
+            count(*) FILTER (WHERE voided_at IS NOT NULL)::int voided,
+            COALESCE(sum(amount_shannons) FILTER (WHERE confirmed_at IS NOT NULL AND voided_at IS NULL), 0) received
+       FROM treasury_receipts`)).rows[0];
+
+  // Liabilities are what the pool owes miners RIGHT NOW: credited but not yet
+  // batched (miner_confirmed) PLUS already batched and not yet paid
+  // (miner_pending_payout) — the payout worker debits the first into the
+  // second, so counting only the first makes the comparison drift downwards
+  // with every batch.
+  const owed = (await db.query(
+    `SELECT COALESCE(sum(amount_shannons), 0) owed FROM ledger_entries
+      WHERE account_type = ANY($1)`, [[ACCOUNTS.CONFIRMED, ACCOUNTS.PENDING_PAYOUT]])).rows[0].owed;
+
+  // Mirrors the reconciler's own work set exactly (src/wallet/reconciler.js
+  // tick()): every state it scans, and "no CONFIRMED un-voided receipt" as
+  // the predicate. Counting only `r.id IS NULL` over MATURE-and-later
+  // undercounted three ways — CANONICAL_IMMATURE blocks were invisible,
+  // as were blocks holding a merely pending receipt, as were blocks whose
+  // receipt had been VOIDED (precisely the stuck ones).
+  const awaiting = (await db.query(
+    `SELECT count(*)::int c FROM blocks b
+      WHERE b.height IS NOT NULL
+        AND b.state IN ('CANONICAL_IMMATURE','MATURE','ALLOCATED','SETTLED_TO_LEDGER')
+        AND NOT EXISTS (
+          SELECT 1 FROM treasury_receipts r
+           WHERE r.block_id = b.id
+             AND r.confirmed_at IS NOT NULL AND r.voided_at IS NULL)`)).rows[0].c;
+
+  // reported separately: a block whose payout was voided and not yet
+  // re-recorded is a distinct condition from one simply not reached yet
+  const voidedBlocks = (await db.query(
+    `SELECT count(*)::int c FROM blocks b
+      WHERE EXISTS (SELECT 1 FROM treasury_receipts r
+                     WHERE r.block_id = b.id AND r.voided_at IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM treasury_receipts r
+                         WHERE r.block_id = b.id AND r.voided_at IS NULL)`)).rows[0].c;
+
+  return {
+    receipts: r,
+    owed_shannons: String(owed),
+    blocks_awaiting_reconciliation: awaiting,
+    blocks_with_voided_receipts: voidedBlocks,
+    // NOT solvency. `received` is LIFETIME confirmed income and only ever
+    // rises; liabilities fall as payouts settle. Once payouts have run the
+    // comparison latches true regardless of what the treasury actually holds.
+    // The real check needs the on-chain balance of the treasury lock, which
+    // needs an indexer — Plan 2.
+    lifetime_income_covers_current_liabilities: BigInt(r.received) >= BigInt(owed),
+    note: 'not an on-chain balance check — see Plan 2',
+  };
+}
+
 async function cmdWallet(db, [action, arg]) {
   if (action === 'status') {
-    const r = (await db.query(
-      `SELECT count(*)::int total,
-              count(*) FILTER (WHERE confirmed_at IS NOT NULL AND voided_at IS NULL)::int confirmed,
-              count(*) FILTER (WHERE confirmed_at IS NULL AND voided_at IS NULL)::int pending,
-              count(*) FILTER (WHERE voided_at IS NOT NULL)::int voided,
-              COALESCE(sum(amount_shannons) FILTER (WHERE confirmed_at IS NOT NULL AND voided_at IS NULL), 0) received
-         FROM treasury_receipts`)).rows[0];
-    const owed = (await db.query(
-      `SELECT COALESCE(sum(amount_shannons), 0) owed FROM ledger_entries
-        WHERE account_type = $1`, [ACCOUNTS.CONFIRMED])).rows[0].owed;
-    const unreconciled = (await db.query(
-      `SELECT count(*)::int c FROM blocks b
-         LEFT JOIN treasury_receipts r ON r.block_id = b.id
-        WHERE b.height IS NOT NULL AND b.state IN ('MATURE','ALLOCATED','SETTLED_TO_LEDGER')
-          AND r.id IS NULL`)).rows[0].c;
-    console.log(JSON.stringify({
-      receipts: r, owed_shannons: String(owed),
-      blocks_awaiting_reconciliation: unreconciled,
-      solvent: BigInt(r.received) >= BigInt(owed),
-    }, null, 2));
+    console.log(JSON.stringify(await walletStatus(db), null, 2));
     return;
   }
   if (action === 'receipts') {
@@ -237,4 +282,10 @@ async function cmdWallet(db, [action, arg]) {
   process.exit(2);
 }
 
-main().catch(e => { console.error('poolctl error:', e.message); process.exit(1); });
+// only when run as the CLI: requiring this module (tests, tooling) must not
+// execute a command or exit the process
+if (require.main === module) {
+  main().catch(e => { console.error('poolctl error:', e.message); process.exit(1); });
+}
+
+module.exports = { walletStatus };

@@ -60,6 +60,55 @@ groups:
             get_block_by_number(height).header.hash against the block's
             recomputed candidate hash before writing the reward off.
 
+      # ── treasury reconciliation (pool-wallet) ─────────────────────────────
+      # Allocation reads treasury_receipts, so a stalled reconciler stops
+      # miner credit without any other symptom: blocks simply sit MATURE.
+      - alert: WalletReconcilerStalled
+        expr: increase(pool_wallet_ticks_total[15m]) == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "pool-wallet is not reconciling — miner credit is halted"
+          description: >-
+            No reconciliation tick completed in 15 minutes (default tick is
+            5 minutes). Blocks stay MATURE and no miner is credited while this
+            holds. Check `systemctl status pool-wallet`, its CKB node RPC
+            (POOL_NODE_RPC) and PostgreSQL, then confirm recovery with
+            `poolctl wallet status` — blocks_awaiting_reconciliation must fall.
+      - alert: WalletDown
+        expr: up{job="pool-wallet"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "pool-wallet down or unreachable"
+          description: >-
+            The reconciler is the only writer of treasury_receipts and
+            allocation waits on them. Start the unit (`systemctl start
+            pool-wallet`); it is stateless and safe to restart at any time.
+      - alert: WalletReceiptsStuckPending
+        expr: pool_wallet_receipts_pending > 0
+        for: 2h
+        labels: { severity: warning }
+        annotations:
+          summary: "a treasury receipt has been pending for hours"
+          description: >-
+            A receipt confirms once its payout block is POOL_WALLET_CONFIRMATIONS
+            (20) deep — minutes, not hours. Still pending means the node is
+            behind or the payout block keeps changing. Inspect with
+            `poolctl wallet receipts` and compare payout_block_height against
+            the node's tip.
+      - alert: WalletReceiptsVoided
+        expr: delta(pool_wallet_receipts_voided[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "a treasury receipt was voided — the payout block changed"
+          description: >-
+            Routine after a reorg at H+11: the reconciler records a
+            replacement on a later tick and the block becomes allocatable
+            again. If `poolctl wallet status` keeps reporting a non-zero
+            blocks_with_voided_receipts, no replacement is being found —
+            check that height's cellbase against our lock.
+
       # a service running older code than the deployed tree (see
       # deploy/check-stale.sh) — the 2026-08-14 root cause
       - alert: ServiceBuildStale

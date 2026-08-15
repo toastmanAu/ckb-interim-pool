@@ -155,6 +155,16 @@ test('a block with no confirmed receipt is not allocated', { timeout: 60000, ski
   const r = await allocateMatureBlock(db, { blockId, logger: { log: () => {} } });
   assert.strictEqual(r.allocated, false, 'must not allocate without verified income');
   assert.strictEqual(r.reason, 'awaiting-receipt');
+
+  // The block must be left exactly as found. Asserting only the return value
+  // is what let the ALLOCATED→revert window survive review: the guard is taken
+  // and reverted in two statements outside a transaction, so a crash between
+  // them strands the block in ALLOCATED with no allocation and no ledger
+  // entries — unrecoverable, because the guard demands MATURE. block-service
+  // retries every 15s, so the window is open constantly.
+  assert.strictEqual(
+    (await db.query(`SELECT state FROM blocks WHERE id = $1`, [blockId])).rows[0].state,
+    'MATURE', 'a block awaiting its receipt must still be MATURE afterwards');
 });
 
 test('allocation uses the receipt amount, not the block cellbase', { timeout: 60000, skip: !dbReady }, async t => {
@@ -205,4 +215,7 @@ test('a voided receipt (reorged payout) is not allocated', { timeout: 60000, ski
   const r = await allocateMatureBlock(db, { blockId, logger: { log: () => {} } });
   assert.strictEqual(r.allocated, false, 'must not allocate on a reorged payment');
   assert.strictEqual(r.reason, 'awaiting-receipt');
+  assert.strictEqual(
+    (await db.query(`SELECT state FROM blocks WHERE id = $1`, [blockId])).rows[0].state,
+    'MATURE', 'a voided payment must leave the block MATURE, not stranded in ALLOCATED');
 });

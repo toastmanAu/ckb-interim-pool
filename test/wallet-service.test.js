@@ -29,11 +29,22 @@ test('receipt metrics are typed as gauges, not counters', () => {
     'a _total suffix would assert a monotonic counter, which these are not');
 });
 
-test('this plan ships no signing path', () => {
-  const src = require('node:fs').readFileSync(
-    require.resolve('../src/wallet/main.js'), 'utf8');
-  for (const forbidden of ['privateKey', 'send_transaction', 'sign(', 'POOL_WALLET_KEY']) {
-    assert.ok(!src.includes(forbidden),
-      `Plan 1 must not be able to move funds; found "${forbidden}"`);
+test('this plan ships no signing path — in ANY wallet file', () => {
+  // Scanning only main.js left the hole exactly where a spend would land:
+  // reconciler.js holds the RPC client, and treasury.js is what a later plan
+  // gates spends on. The guard covers the whole directory, and names the file
+  // it found, so it still means something once these files grow.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const dir = path.dirname(require.resolve('../src/wallet/main.js'));
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
+
+  assert.ok(files.length >= 4, `expected the wallet directory to be scanned, saw ${files.length} file(s)`);
+  for (const file of files) {
+    const src = fs.readFileSync(path.join(dir, file), 'utf8');
+    for (const forbidden of ['privateKey', 'send_transaction', 'sign(', 'POOL_WALLET_KEY']) {
+      assert.ok(!src.includes(forbidden),
+        `Plan 1 must not be able to move funds; found "${forbidden}" in src/wallet/${file}`);
+    }
   }
 });
