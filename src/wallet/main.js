@@ -18,6 +18,36 @@ const { BUILD_INFO } = require('../common/build-info.js');
 const HELP_BUILD = '# HELP pool_build_info commit this process was started from (1 = always)';
 
 /**
+ * One treasury_snapshots row per lock we have ever received confirmed income
+ * to, each tick — so treasury movement is answerable after the fact rather
+ * than reconstructed.
+ *
+ * `total_shannons` (confirmed, un-voided treasury_receipts) and
+ * `owed_shannons` (ledger `miner_confirmed` balance) are real measurements.
+ * `spendable_shannons`/`cell_count` require enumerating the treasury lock's
+ * cells through an indexer, which this plan does not have — that arrives with
+ * the indexer client in a later plan. They are written NULL, not 0: a stored
+ * 0 would assert "nothing is spendable", which is a claim this plan cannot
+ * make and NULL (not-yet-measured) does not.
+ */
+async function snapshotTreasuryLocks(db) {
+  const locks = await db.query(
+    `SELECT lock_args, sum(amount_shannons) AS received
+       FROM treasury_receipts WHERE voided_at IS NULL AND confirmed_at IS NOT NULL
+      GROUP BY lock_args`);
+  const owed = (await db.query(
+    `SELECT COALESCE(sum(amount_shannons), 0) AS owed FROM ledger_entries
+      WHERE account_type = 'miner_confirmed'`)).rows[0].owed;
+  for (const l of locks.rows) {
+    await db.query(
+      `INSERT INTO treasury_snapshots
+         (lock_args, total_shannons, spendable_shannons, cell_count, owed_shannons)
+       VALUES ($1, $2, NULL, NULL, $3)`,
+      [l.lock_args, l.received, owed]);
+  }
+}
+
+/**
  * Receipt state read from the database, not accumulated in process.
  * An in-process counter resets on restart and can drift from the table it
  * claims to describe; these figures are the table.
@@ -107,8 +137,11 @@ async function main() {
 
   const intervalMs = parseInt(process.env.POOL_WALLET_TICK_MS || '300000', 10);
   const timer = setInterval(async () => {
-    try { await reconciler.tick(); metrics.ticks++; }
-    catch (e) { metrics.rpc_errors++; console.log('WALLET', `tick failed: ${e.message}`); }
+    try {
+      await reconciler.tick();
+      await snapshotTreasuryLocks(db);
+      metrics.ticks++;
+    } catch (e) { metrics.rpc_errors++; console.log('WALLET', `tick failed: ${e.message}`); }
   }, intervalMs);
 
   const shutdown = async () => {
@@ -120,10 +153,13 @@ async function main() {
   process.on('SIGTERM', shutdown);
   process.on('SIGINT', shutdown);
 
-  try { await reconciler.tick(); metrics.ticks++; }
-  catch (e) { metrics.rpc_errors++; console.log('WALLET', `initial tick failed: ${e.message}`); }
+  try {
+    await reconciler.tick();
+    await snapshotTreasuryLocks(db);
+    metrics.ticks++;
+  } catch (e) { metrics.rpc_errors++; console.log('WALLET', `initial tick failed: ${e.message}`); }
 }
 
 if (require.main === module) main().catch(e => { console.error('[WALLET] fatal:', e); process.exit(1); });
 
-module.exports = { buildMetrics, HELP_BUILD, readReceiptCounts };
+module.exports = { buildMetrics, HELP_BUILD, readReceiptCounts, snapshotTreasuryLocks };

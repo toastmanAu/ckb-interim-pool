@@ -74,6 +74,28 @@ test('treasury schema', { timeout: 60000, skip: !dbReady }, async t => {
       /check|constraint/i);
   });
 
+  await t.test('treasury_snapshots allows NULL spendable_shannons and cell_count', async () => {
+    // migration 004: these two figures require enumerating the treasury
+    // lock's cells through an indexer, which Plan 1 does not have. NULL means
+    // not-yet-measured; a NOT NULL column would force a false 0 in its place.
+    const { rows } = await db.query(
+      `SELECT column_name, is_nullable FROM information_schema.columns
+        WHERE table_name = 'treasury_snapshots'
+          AND column_name IN ('spendable_shannons', 'cell_count')
+        ORDER BY column_name`);
+    const byName = Object.fromEntries(rows.map(r => [r.column_name, r.is_nullable]));
+    assert.strictEqual(byName.cell_count, 'YES', 'cell_count must allow NULL');
+    assert.strictEqual(byName.spendable_shannons, 'YES', 'spendable_shannons must allow NULL');
+
+    await db.query('TRUNCATE treasury_snapshots');
+    await db.query(
+      `INSERT INTO treasury_snapshots (lock_args, total_shannons, spendable_shannons, cell_count, owed_shannons)
+       VALUES ('0xaa', 100, NULL, NULL, 0)`);
+    const row = (await db.query('SELECT * FROM treasury_snapshots')).rows[0];
+    assert.strictEqual(row.spendable_shannons, null);
+    assert.strictEqual(row.cell_count, null);
+  });
+
   await t.test('payout_batches gained the approval columns', async () => {
     const { rows } = await db.query(
       `SELECT column_name, data_type FROM information_schema.columns
