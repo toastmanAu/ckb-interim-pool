@@ -116,14 +116,24 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
       [row.id])).rows[0];
 
     if (!existing) {
-      await db.query(
-        `INSERT INTO treasury_receipts
-           (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
-            lock_args, amount_shannons, mature_at_epoch, confirmed_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9 THEN now() ELSE NULL END)
-         ON CONFLICT (block_id) DO NOTHING`,
-        [row.id, height, receipt.payoutBlockHeight, receipt.payoutTxHash, receipt.outputIndex,
-         receipt.lockArgs, receipt.amountShannons, receipt.matureAtEpoch, deep]);
+      try {
+        await db.query(
+          `INSERT INTO treasury_receipts
+             (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
+              lock_args, amount_shannons, mature_at_epoch, confirmed_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8, CASE WHEN $9 THEN now() ELSE NULL END)
+           ON CONFLICT (block_id) DO NOTHING`,
+          [row.id, height, receipt.payoutBlockHeight, receipt.payoutTxHash, receipt.outputIndex,
+           receipt.lockArgs, receipt.amountShannons, receipt.matureAtEpoch, deep]);
+      } catch (e) {
+        // 23505 = unique_violation. The schema carries a SECOND unique key,
+        // (payout_tx_hash, output_index), which ON CONFLICT (block_id) does not
+        // cover: two overlapping ticks can both read `existing` as null and both
+        // insert. The loser must be a no-op, not an exception that aborts the pass.
+        if (e.code !== '23505') throw e;
+        logger.log('WALLET', `block ${height}: receipt already recorded by a concurrent pass`);
+        return;
+      }
       logger.log('WALLET', `block ${height}: receipt ${receipt.amountShannons} shannons from ${payoutHeight}${deep ? ' (confirmed)' : ''}`);
       return;
     }
@@ -155,7 +165,14 @@ function createReconciler({ db, rpcClient, confirmations = 20, logger = console 
           AND b.state IN ('CANONICAL_IMMATURE','MATURE','ALLOCATED','SETTLED_TO_LEDGER')
           AND (r.id IS NULL OR (r.confirmed_at IS NULL AND r.voided_at IS NULL))
         ORDER BY b.height`);
-    for (const row of rows) await reconcileBlock(row, tipHeight);
+    for (const row of rows) {
+      try {
+        await reconcileBlock(row, tipHeight);
+      } catch (e) {
+        // one block's failure must not cost every later block its pass
+        logger.log('WALLET', `block ${row.height}: reconcile failed: ${e.message}`);
+      }
+    }
   }
 
   return { tick, reconcileBlock };

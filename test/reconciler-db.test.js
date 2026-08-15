@@ -116,4 +116,26 @@ test('receipt persistence', { timeout: 60000, skip: !dbReady }, async t => {
     const { rows } = await db.query('SELECT count(*)::int c FROM treasury_receipts');
     assert.strictEqual(rows[0].c, 0, 'missing evidence is not a zero receipt');
   });
+
+  await t.test('a concurrent duplicate on the second unique key is a no-op, not a crash', async () => {
+    await db.query('TRUNCATE treasury_receipts, blocks CASCADE');
+    await seedBlock(db, CASE.blockHeight);
+    // simulate a racing tick that already claimed this cellbase output under a
+    // DIFFERENT block row: that trips UNIQUE(payout_tx_hash, output_index),
+    // which ON CONFLICT (block_id) does not cover
+    const other = await seedBlock(db, CASE.blockHeight + 1000);
+    await db.query(
+      `INSERT INTO treasury_receipts
+         (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
+          lock_args, amount_shannons, mature_at_epoch)
+       VALUES ($1, $2, $3, $4, 0, '0xaa', 1, 5)`,
+      [other, CASE.blockHeight + 1000, CASE.payoutBlockHeight, CASE.payoutTxHash]);
+
+    const node = makeNode({ tipHeight: CASE.payoutBlockHeight + 50 });
+    await createReconciler({ db, rpcClient: node, confirmations: 20, logger: quiet }).tick();
+
+    const { rows } = await db.query('SELECT count(*)::int c FROM treasury_receipts');
+    assert.strictEqual(rows[0].c, 1,
+      'the racing insert must be a no-op leaving one row, not throw');
+  });
 });
