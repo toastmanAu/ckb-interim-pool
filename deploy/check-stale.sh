@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HEAD_SHA="$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # services exposing pool_build_info on a Prometheus endpoint
-URLS="${POOL_METRICS_URLS:-http://127.0.0.1:9101/metrics}"
+URLS="${POOL_METRICS_URLS:-http://127.0.0.1:9101/metrics,http://127.0.0.1:9102/metrics}"
 
 if [ "$HEAD_SHA" = "unknown" ]; then
   echo "cannot resolve repo HEAD at $REPO_ROOT — is this a git checkout?" >&2

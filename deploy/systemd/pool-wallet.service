@@ -1,0 +1,29 @@
+[Unit]
+Description=CKB Interim Pool — treasury reconciliation (no signing key)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pool-wallet
+Group=pool-wallet
+WorkingDirectory=/opt/wyltek-pool
+Environment=POOL_DB_URL=postgres://pool:CHANGEME@127.0.0.1:5432/pooltest
+Environment=POOL_NODE_RPC=http://127.0.0.1:8114
+Environment=POOL_WALLET_TICK_MS=300000
+Environment=POOL_WALLET_CONFIRMATIONS=20
+Environment=POOL_WALLET_METRICS_PORT=9102
+ExecStart=/usr/bin/node src/wallet/main.js
+Restart=always
+RestartSec=5
+MemoryHigh=256M
+MemoryMax=512M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryDenyWriteExecute=yes
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
