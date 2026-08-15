@@ -1,0 +1,113 @@
+{
+ "note": "Real mainnet H/H+11 pairs for blocks this pool won. Each block's own cellbase witness names the lock that earned it; the payment arrives 11 blocks later. Block 20160918 is the important one: accounting recorded 829.5442776900 CKB from its own cellbase, while the pool actually received 675.06476541 CKB.",
+ "source": "CKB mainnet, read from the pool's trusted node",
+ "rewardDelayBlocks": 11,
+ "cellbaseMaturityEpochs": 4,
+ "cases": [
+  {
+   "blockHeight": 20152836,
+   "expectedLockArgs": "0x5ea0977c3cab6898817c9860fe70d26acf559f76",
+   "payoutBlockHeight": 20152847,
+   "payoutTxHash": "0x14467a88bd4bc242aa09179b7b09d103672b6a0e608087383dd2b9bbd9c686b2",
+   "outputIndex": 0,
+   "amountShannons": "80247072037",
+   "payoutBlockEpoch": "0x4e8024c003994",
+   "matureAtEpoch": 14744,
+   "accountingRecordedShannons": "80245035867",
+   "cellbaseWitness": "0x950000000c00000055000000490000001000000030000000310000009bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce801140000005ea0977c3cab6898817c9860fe70d26acf559f763c0000000000000020302e3230392e3020286431363665323820323032362d30372d323929206d696e65642062792077796c74656b20696e6475737472696573",
+   "payoutBlock": {
+    "header": {
+     "number": "0x133820f",
+     "epoch": "0x4e8024c003994",
+     "hash": "0x61d5e8084d000aadb0ba9556be341a93f390027a4fb43c541e0bdd3ffc1526ff"
+    },
+    "transactions": [
+     {
+      "hash": "0x14467a88bd4bc242aa09179b7b09d103672b6a0e608087383dd2b9bbd9c686b2",
+      "outputs": [
+       {
+        "capacity": "0x12af192525",
+        "lock": {
+         "args": "0x5ea0977c3cab6898817c9860fe70d26acf559f76",
+         "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+         "hash_type": "type"
+        },
+        "type": null
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "blockHeight": 20153038,
+   "expectedLockArgs": "0x5ea0977c3cab6898817c9860fe70d26acf559f76",
+   "payoutBlockHeight": 20153049,
+   "payoutTxHash": "0x1e9ec99f234f085d91d27935de9eafd548fa987df629abc870f362e0fcfd20f9",
+   "outputIndex": 0,
+   "amountShannons": "80244725756",
+   "payoutBlockEpoch": "0x4e80316003994",
+   "matureAtEpoch": 14744,
+   "accountingRecordedShannons": "80244726168",
+   "cellbaseWitness": "0x950000000c00000055000000490000001000000030000000310000009bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce801140000005ea0977c3cab6898817c9860fe70d26acf559f763c0000000000000020302e3230392e3020286431363665323820323032362d30372d323929206d696e65642062792077796c74656b20696e6475737472696573",
+   "payoutBlock": {
+    "header": {
+     "number": "0x13382d9",
+     "epoch": "0x4e80316003994",
+     "hash": "0xbba42194c27873f95a206018bf781f2c91a92abf3881accdbcb7db1d3008dda9"
+    },
+    "transactions": [
+     {
+      "hash": "0x1e9ec99f234f085d91d27935de9eafd548fa987df629abc870f362e0fcfd20f9",
+      "outputs": [
+       {
+        "capacity": "0x12aef557fc",
+        "lock": {
+         "args": "0x5ea0977c3cab6898817c9860fe70d26acf559f76",
+         "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+         "hash_type": "type"
+        },
+        "type": null
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "blockHeight": 20160918,
+   "expectedLockArgs": "0x5ea0977c3cab6898817c9860fe70d26acf559f76",
+   "payoutBlockHeight": 20160929,
+   "payoutTxHash": "0xb59f2292b05d0736ab819a3be90b24bf6400d3ef9e5253f8c0ad0b9415c63ecb",
+   "outputIndex": 0,
+   "amountShannons": "67506476541",
+   "payoutBlockEpoch": "0x5d5000f00399a",
+   "matureAtEpoch": 14750,
+   "accountingRecordedShannons": "82954427769",
+   "cellbaseWitness": "0x950000000c00000055000000490000001000000030000000310000009bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce801140000005ea0977c3cab6898817c9860fe70d26acf559f763c0000000000000020302e3230392e3020286431363665323820323032362d30372d323929206d696e65642062792077796c74656b20696e6475737472696573",
+   "payoutBlock": {
+    "header": {
+     "number": "0x133a1a1",
+     "epoch": "0x5d5000f00399a",
+     "hash": "0x73081ac1ec11f3980b8c05f05f5bd530f26fee4d345738ce08bd4e569edb1ae3"
+    },
+    "transactions": [
+     {
+      "hash": "0xb59f2292b05d0736ab819a3be90b24bf6400d3ef9e5253f8c0ad0b9415c63ecb",
+      "outputs": [
+       {
+        "capacity": "0xfb7b315fd",
+        "lock": {
+         "args": "0x5ea0977c3cab6898817c9860fe70d26acf559f76",
+         "code_hash": "0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8",
+         "hash_type": "type"
+        },
+        "type": null
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}
