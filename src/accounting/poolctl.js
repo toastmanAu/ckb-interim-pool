@@ -11,6 +11,8 @@
  *   poolctl payout dry-run
  *   poolctl payout inspect <batch-id>
  *   poolctl events replay-status
+ *   poolctl wallet status
+ *   poolctl wallet receipts [height]
  *
  * Read-only except `payout dry-run` (builds a document, broadcasts nothing)
  * and `block recheck` (reopens a verdict for re-verification; decides nothing
@@ -36,8 +38,9 @@ async function main() {
       case 'ledger': return await cmdLedger(db, rest);
       case 'payout': return await cmdPayout(db, rest);
       case 'events': return await cmdEvents(db, rest);
+      case 'wallet': return await cmdWallet(db, rest);
       default:
-        console.error('usage: poolctl <block|miner|ledger|payout|events> …');
+        console.error('usage: poolctl <block|miner|ledger|payout|events|wallet> …');
         process.exit(2);
     }
   } finally {
@@ -194,6 +197,44 @@ async function cmdEvents(db) {
      GROUP BY edge_id, boot_id ORDER BY edge_id`,
   )).rows;
   console.log(JSON.stringify({ per_edge: perEdge }, null, 2));
+}
+
+async function cmdWallet(db, [action, arg]) {
+  if (action === 'status') {
+    const r = (await db.query(
+      `SELECT count(*)::int total,
+              count(*) FILTER (WHERE confirmed_at IS NOT NULL AND voided_at IS NULL)::int confirmed,
+              count(*) FILTER (WHERE confirmed_at IS NULL AND voided_at IS NULL)::int pending,
+              count(*) FILTER (WHERE voided_at IS NOT NULL)::int voided,
+              COALESCE(sum(amount_shannons) FILTER (WHERE confirmed_at IS NOT NULL AND voided_at IS NULL), 0) received
+         FROM treasury_receipts`)).rows[0];
+    const owed = (await db.query(
+      `SELECT COALESCE(sum(amount_shannons), 0) owed FROM ledger_entries
+        WHERE account_type = $1`, [ACCOUNTS.CONFIRMED])).rows[0].owed;
+    const unreconciled = (await db.query(
+      `SELECT count(*)::int c FROM blocks b
+         LEFT JOIN treasury_receipts r ON r.block_id = b.id
+        WHERE b.height IS NOT NULL AND b.state IN ('MATURE','ALLOCATED','SETTLED_TO_LEDGER')
+          AND r.id IS NULL`)).rows[0].c;
+    console.log(JSON.stringify({
+      receipts: r, owed_shannons: String(owed),
+      blocks_awaiting_reconciliation: unreconciled,
+      solvent: BigInt(r.received) >= BigInt(owed),
+    }, null, 2));
+    return;
+  }
+  if (action === 'receipts') {
+    const { rows } = await db.query(
+      `SELECT block_height, payout_block_height, lock_args, amount_shannons,
+              payout_tx_hash, confirmed_at, voided_at
+         FROM treasury_receipts
+        WHERE ($1::bigint IS NULL OR block_height = $1)
+        ORDER BY block_height DESC LIMIT 50`, [arg ? Number(arg) : null]);
+    console.log(JSON.stringify(rows, null, 2));
+    return;
+  }
+  console.error('usage: poolctl wallet <status|receipts [height]>');
+  process.exit(2);
 }
 
 main().catch(e => { console.error('poolctl error:', e.message); process.exit(1); });
