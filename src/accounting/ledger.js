@@ -41,6 +41,25 @@ async function verifyBlockConservation(db, blockId, rewardShannons) {
   return BigInt(res.rows[0].total) === BigInt(rewardShannons);
 }
 
+/**
+ * Blocks whose distribution can be audited: allocated, and carrying a
+ * confirmed, un-voided treasury receipt to check the ledger against.
+ *
+ * The amount comes from the RECEIPT, never blocks.reward_shannons. A CKB
+ * cellbase pays the miner of N-11, so that column recorded a stranger's
+ * reward and is no longer written; feeding its NULL to
+ * verifyBlockConservation throws (BigInt(null)) and kills the caller's tick.
+ */
+async function auditableBlocks(db) {
+  const { rows } = await db.query(
+    `SELECT b.id::text AS id, r.amount_shannons AS reward_shannons, b.state
+       FROM blocks b
+       JOIN treasury_receipts r ON r.block_id = b.id
+      WHERE b.state IN ('ALLOCATED', 'SETTLED_TO_LEDGER')
+        AND r.confirmed_at IS NOT NULL AND r.voided_at IS NULL`);
+  return rows;
+}
+
 const ACCOUNTS = {
   IMMATURE: 'miner_immature',
   CONFIRMED: 'miner_confirmed',
@@ -52,4 +71,4 @@ const ACCOUNTS = {
   ADJUSTMENT: 'adjustment',
 };
 
-module.exports = { postEntry, balanceFor, verifyBlockConservation, ACCOUNTS };
+module.exports = { postEntry, balanceFor, verifyBlockConservation, auditableBlocks, ACCOUNTS };

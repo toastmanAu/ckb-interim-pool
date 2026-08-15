@@ -21,7 +21,7 @@ const { createDb } = require('./db.js');
 const { allocateBlock } = require('../pplns/pplns.js');
 const { compactToTargetLE } = require('../mining/ckb-target.js');
 const { targetLEToWorkUnits } = require('../pplns/work-units.js');
-const { balanceFor, verifyBlockConservation, ACCOUNTS } = require('./ledger.js');
+const { balanceFor, verifyBlockConservation, auditableBlocks, ACCOUNTS } = require('./ledger.js');
 
 const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
 
@@ -137,10 +137,7 @@ async function cmdLedger(db) {
   // waiting for maturity. This must match block-service.js's audit scope; if
   // the operator's audit tool cries wolf, the LedgerConservation alert ("STOP
   // payouts until audited") becomes unactionable.
-  const blocks = (await db.query(
-    `SELECT id::text, reward_shannons FROM blocks
-     WHERE reward_shannons IS NOT NULL AND state IN ('ALLOCATED', 'SETTLED_TO_LEDGER')`,
-  )).rows;
+  const blocks = await auditableBlocks(db);
   let ok = true;
   for (const b of blocks) {
     const conserved = await verifyBlockConservation(db, b.id, b.reward_shannons);
@@ -149,8 +146,11 @@ async function cmdLedger(db) {
   // reported, not audited: visible so an allocation that never runs cannot
   // hide behind an empty check
   const pending = (await db.query(
-    `SELECT count(*)::int c FROM blocks
-     WHERE reward_shannons IS NOT NULL AND state NOT IN ('ALLOCATED', 'SETTLED_TO_LEDGER')`,
+    `SELECT count(*)::int c
+       FROM blocks b
+       JOIN treasury_receipts r ON r.block_id = b.id
+      WHERE b.state NOT IN ('ALLOCATED', 'SETTLED_TO_LEDGER')
+        AND r.confirmed_at IS NOT NULL AND r.voided_at IS NULL`,
   )).rows[0].c;
   const entries = (await db.query(`SELECT count(*)::int c FROM ledger_entries`)).rows[0].c;
   const dupKeys = (await db.query(

@@ -16,7 +16,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { createDb } = require('../accounting/db.js');
-const { balanceFor, verifyBlockConservation, ACCOUNTS } = require('../accounting/ledger.js');
+const { balanceFor, verifyBlockConservation, auditableBlocks, ACCOUNTS } = require('../accounting/ledger.js');
 const { allocateBlock } = require('../pplns/pplns.js');
 const { compactToTargetLE } = require('../mining/ckb-target.js');
 const { targetLEToWorkUnits } = require('../pplns/work-units.js');
@@ -96,9 +96,7 @@ function createAdminServer({ db, token = process.env.POOL_ADMIN_TOKEN || '', log
         return json(res, 200, out);
       }
       case 'ledger/verify': {
-        const blocks = (await db.query(
-          `SELECT id::text, reward_shannons FROM blocks WHERE reward_shannons IS NOT NULL`,
-        )).rows;
+        const blocks = await auditableBlocks(db);
         let conserved = true;
         for (const b of blocks) {
           if (!(await verifyBlockConservation(db, b.id, b.reward_shannons))) conserved = false;

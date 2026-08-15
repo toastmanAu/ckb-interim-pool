@@ -150,9 +150,11 @@ test('block lifecycle: canonical → immature → mature; orphan detection', { t
 
   // ── canonical but immature ───────────────────────────────────────────────
   await tracker.tick();
-  let row = (await db.query(`SELECT state, block_hash FROM blocks WHERE nonce = $1`, [NONCE])).rows[0];
+  let row = (await db.query(`SELECT state, block_hash, reward_shannons FROM blocks WHERE nonce = $1`, [NONCE])).rows[0];
   assert.strictEqual(row.state, 'CANONICAL_IMMATURE');
   assert.strictEqual(row.block_hash, '0x' + BLOCK_HASH);
+  assert.strictEqual(row.reward_shannons, null,
+    'the tracker must not record the N-11 cellbase as our reward');
 
   // ── mature after 4 epochs ─────────────────────────────────────────────────
   // epoch encoding: 0x{length[16]}{index[16]}{number[24]} — number is LOW bits

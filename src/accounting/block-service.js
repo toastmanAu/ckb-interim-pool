@@ -11,7 +11,7 @@
 
 const { createBlockTracker } = require('./block-tracker.js');
 const { allocateMatureBlock } = require('./allocator.js');
-const { verifyBlockConservation } = require('./ledger.js');
+const { verifyBlockConservation, auditableBlocks } = require('./ledger.js');
 
 function createBlockService({ db, rpcClient, intervalMs = 15000, maturityEpochs = 4, feeBps = 100, windowNum = 2, windowDen = 1, logger = console, metrics = null }) {
   let timer = null;
@@ -34,11 +34,8 @@ function createBlockService({ db, rpcClient, intervalMs = 15000, maturityEpochs 
     }
 
     // conservation audit over allocated blocks (alert metric, spec 06 §9)
-    const audit = await db.query(
-      `SELECT b.id, b.reward_shannons, b.state
-       FROM blocks b WHERE b.state IN ('SETTLED_TO_LEDGER','ALLOCATED')`,
-    );
-    for (const b of audit.rows) {
+    const audit = await auditableBlocks(db);
+    for (const b of audit) {
       const ok = await verifyBlockConservation(db, b.id, b.reward_shannons);
       if (!ok) {
         metrics?.inc?.('ledger_conservation_failures_total');

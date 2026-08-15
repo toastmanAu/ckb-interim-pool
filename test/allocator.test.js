@@ -77,8 +77,14 @@ test('allocation + ledger: conservation, idempotency, immutable snapshot', { tim
     shareIds.push(r.rows[0].id);
   }
 
-  // the block: MATURE, reward 1100 CKB, template with compact target
-  const reward = 110000000000n;
+  // the block: MATURE, template with compact target. Its stored
+  // reward_shannons is deliberately a DIFFERENT (wrong, stranger's-reward)
+  // figure than the treasury receipt: this proves allocation distributes
+  // the receipt amount, not the stale column — restoring
+  // `BigInt(block.reward_shannons)` inside the allocator would make this
+  // test fail, not pass.
+  const staleCellbaseReward = 82954427769n;   // 829.54 CKB — the wrong number
+  const reward = 110000000000n;               // 1100 CKB — the receipt's true figure
   const blockR = await db.query(
     `INSERT INTO blocks (id, candidate_event_id, edge_id, boot_id, job_id, nonce, miner_id,
                          height, parent_hash, state, reward_shannons, template_json, block_epoch_json)
@@ -86,7 +92,7 @@ test('allocation + ledger: conservation, idempotency, immutable snapshot', { tim
              $9::jsonb, '0x5')
      RETURNING id::text`,
     [uuidv7(), shareIds[shareIds.length - 1], EDGE, BOOT, 'job7', '0x' + 'aa'.repeat(16), aId,
-     reward.toString(), JSON.stringify({ compact_target: '0x19020000' })],
+     staleCellbaseReward.toString(), JSON.stringify({ compact_target: '0x19020000' })],
   );
   const blockId = blockR.rows[0].id;
 
