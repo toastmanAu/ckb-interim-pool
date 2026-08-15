@@ -9,6 +9,7 @@
  */
 
 const { CELLBASE_MATURITY_EPOCHS } = require('./reconciler.js');
+const { ACCOUNTS } = require('../accounting/ledger.js');
 
 /**
  * @param {object} p
@@ -29,4 +30,36 @@ function spendableSplit({ cells, tipEpochNumber }) {
   return { total: total.toString(), spendable: spendable.toString(), cellCount: cells.length };
 }
 
-module.exports = { spendableSplit };
+/**
+ * One treasury_snapshots row per lock we have ever received confirmed income
+ * to — so treasury movement is answerable after the fact rather than
+ * reconstructed.
+ *
+ * `total_shannons` (confirmed, un-voided treasury_receipts) and
+ * `owed_shannons` (the `ACCOUNTS.CONFIRMED` ledger balance) are real
+ * measurements. `spendable_shannons`/`cell_count` require enumerating the
+ * treasury lock's cells through an indexer, which this plan does not have —
+ * that arrives with the indexer client in a later plan. They are written
+ * NULL, not 0: a stored 0 would assert "nothing is spendable", which is a
+ * claim this plan cannot make and NULL (not-yet-measured) does not.
+ *
+ * @param {{query: Function}} db
+ */
+async function snapshotTreasuryLocks(db) {
+  const locks = await db.query(
+    `SELECT lock_args, sum(amount_shannons) AS received
+       FROM treasury_receipts WHERE voided_at IS NULL AND confirmed_at IS NOT NULL
+      GROUP BY lock_args`);
+  const owed = (await db.query(
+    `SELECT COALESCE(sum(amount_shannons), 0) AS owed FROM ledger_entries
+      WHERE account_type = $1`, [ACCOUNTS.CONFIRMED])).rows[0].owed;
+  for (const l of locks.rows) {
+    await db.query(
+      `INSERT INTO treasury_snapshots
+         (lock_args, total_shannons, spendable_shannons, cell_count, owed_shannons)
+       VALUES ($1, $2, NULL, NULL, $3)`,
+      [l.lock_args, l.received, owed]);
+  }
+}
+
+module.exports = { spendableSplit, snapshotTreasuryLocks };

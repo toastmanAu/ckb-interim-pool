@@ -4,7 +4,8 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { execSync } = require('node:child_process');
 const { createDb } = require('../src/accounting/db.js');
-const { snapshotTreasuryLocks } = require('../src/wallet/main.js');
+const { snapshotTreasuryLocks } = require('../src/wallet/treasury.js');
+const { ACCOUNTS } = require('../src/accounting/ledger.js');
 const { destructiveDbUrl } = require('./tools/test-db.js');
 
 const DB_URL = destructiveDbUrl();
@@ -45,8 +46,10 @@ test('treasury snapshots', { timeout: 60000, skip: !dbReady }, async t => {
     await seedReceipt(db, { lockArgs: '0xaa', amount: '9999', confirmed: false, height: 3 });
     await db.query(
       `INSERT INTO ledger_entries (account_type, amount_shannons, reference_type, reference_id, idempotency_key)
-       VALUES ('miner_confirmed', 50, 'test', 'r1', 'snap-test-1'),
-              ('miner_confirmed', 25, 'test', 'r2', 'snap-test-2')`);
+       VALUES ($1, 50, 'test', 'r1', 'snap-test-1'),
+              ($1, 25, 'test', 'r2', 'snap-test-2'),
+              ($2, 999, 'test', 'r3', 'snap-test-3')`,
+      [ACCOUNTS.CONFIRMED, ACCOUNTS.POOL_FEE]);   // a different account must not bleed into owed
 
     await snapshotTreasuryLocks(db);
 
@@ -54,7 +57,7 @@ test('treasury snapshots', { timeout: 60000, skip: !dbReady }, async t => {
       'SELECT * FROM treasury_snapshots WHERE lock_args = $1', ['0xaa'])).rows[0];
     assert.ok(row, 'snapshot row written');
     assert.strictEqual(row.total_shannons, '300', 'only confirmed, un-voided receipts count');
-    assert.strictEqual(row.owed_shannons, '75');
+    assert.strictEqual(row.owed_shannons, '75', 'only ACCOUNTS.CONFIRMED counts toward owed');
     assert.strictEqual(row.spendable_shannons, null,
       'no indexer client in this plan — must be NULL, not a false 0');
     assert.strictEqual(row.cell_count, null,
