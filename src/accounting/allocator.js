@@ -47,6 +47,25 @@ async function ensureConfigSnapshot(db, { windowNum, windowDen, feeBps }) {
 }
 
 /**
+ * The reward a block actually earned, from the wallet's reconciled receipt.
+ *
+ * NOT from the block's own cellbase: in CKB that cellbase pays the miner of
+ * N-11, so reading it reports a stranger's reward. On 2026-08-15 that
+ * over-recorded block 20160918 by 154.48 CKB. `pool-wallet` writes the true
+ * figure; allocation waits for it.
+ *
+ * @returns {Promise<string|null>} shannons as a decimal string, or null if the
+ *   income has not been verified yet
+ */
+async function rewardForBlock(db, blockId) {
+  const { rows } = await db.query(
+    `SELECT amount_shannons FROM treasury_receipts
+      WHERE block_id = $1 AND confirmed_at IS NOT NULL AND voided_at IS NULL`,
+    [blockId]);
+  return rows[0] ? String(rows[0].amount_shannons) : null;
+}
+
+/**
  * Allocate a MATURE block. Returns { allocated: boolean } — false when the
  * block is not MATURE or was already allocated.
  */
@@ -55,12 +74,20 @@ async function allocateMatureBlock(db, { blockId, windowNum = 2, windowDen = 1, 
   const guard = await db.query(
     `UPDATE blocks SET state = 'ALLOCATED'
      WHERE id = $1 AND state = 'MATURE'
-     RETURNING id, reward_shannons, candidate_event_id, config_snapshot_id`,
+     RETURNING id, candidate_event_id, config_snapshot_id`,
     [blockId],
   );
   if (guard.rowCount === 0) return { allocated: false };
   const block = guard.rows[0];
-  const reward = BigInt(block.reward_shannons);
+
+  const rewardShannonsStr = await rewardForBlock(db, blockId);
+  if (rewardShannonsStr === null) {
+    // income not yet verified on chain — revert the guard and try again later
+    await db.query(`UPDATE blocks SET state = 'MATURE' WHERE id = $1`, [blockId]);
+    logger.log('ALLOC', `block ${String(blockId).slice(0, 8)} awaiting treasury receipt`);
+    return { allocated: false, reason: 'awaiting-receipt' };
+  }
+  const reward = BigInt(rewardShannonsStr);
 
   // canonical share order (spec 07 §9): accepted_at, edge_id, boot_id, edge_seq
   const sharesRes = await db.query(
@@ -152,4 +179,4 @@ async function allocateMatureBlock(db, { blockId, windowNum = 2, windowDen = 1, 
   return { allocated: true, result };
 }
 
-module.exports = { allocateMatureBlock, ensureConfigSnapshot, latestConfig };
+module.exports = { allocateMatureBlock, ensureConfigSnapshot, latestConfig, rewardForBlock };

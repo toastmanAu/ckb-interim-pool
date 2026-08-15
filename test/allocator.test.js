@@ -9,7 +9,7 @@ const { execSync } = require('node:child_process');
 const path = require('node:path');
 
 const { createDb } = require('../src/accounting/db.js');
-const { allocateMatureBlock } = require('../src/accounting/allocator.js');
+const { allocateMatureBlock, rewardForBlock } = require('../src/accounting/allocator.js');
 const { balanceFor, verifyBlockConservation, ACCOUNTS } = require('../src/accounting/ledger.js');
 const { uuidv7 } = require('../src/common/ids.js');
 
@@ -46,7 +46,7 @@ test('allocation + ledger: conservation, idempotency, immutable snapshot', { tim
   const db = createDb(DB_URL);
   t.after(() => db.close());
   await db.migrate(MIGRATIONS);
-  await db.query('TRUNCATE ledger_entries, block_allocations, block_allocation_items, blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges, config_snapshots CASCADE');
+  await db.query('TRUNCATE ledger_entries, block_allocations, block_allocation_items, treasury_receipts, blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges, config_snapshots CASCADE');
 
   const { minerId: aId } = await seedMiner(db, ADDR_A, 'k7-01');
   const { minerId: bId } = await seedMiner(db, ADDR_B, 'gs-1');
@@ -90,6 +90,17 @@ test('allocation + ledger: conservation, idempotency, immutable snapshot', { tim
   );
   const blockId = blockR.rows[0].id;
 
+  // reconciled treasury income (Task 4's pool-wallet output) — this is what
+  // allocateMatureBlock now reads, not the block's own reward_shannons
+  await db.query(
+    `INSERT INTO treasury_receipts
+       (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
+        lock_args, amount_shannons, mature_at_epoch, confirmed_at)
+     VALUES ($1, 123456, 123467, $2, 0, '0x5ea0977c3cab6898817c9860fe70d26acf559f76',
+             $3, 100, now())`,
+    [blockId, '0x' + 'cc'.repeat(32), reward.toString()],
+  );
+
   // ── allocate ──────────────────────────────────────────────────────────────
   const r1 = await allocateMatureBlock(db, { blockId, windowNum: 2, windowDen: 1, feeBps: 100, logger: { log: () => {} } });
   assert.strictEqual(r1.allocated, true);
@@ -122,4 +133,70 @@ test('allocation + ledger: conservation, idempotency, immutable snapshot', { tim
     [uuidv7(), shareIds[0], EDGE, BOOT, 'x', '0x' + 'bb'.repeat(16)],
   )).rows[0].id;
   assert.strictEqual((await allocateMatureBlock(db, { blockId: immature, feeBps: 100 })).allocated, false);
+});
+
+test('a block with no confirmed receipt is not allocated', { timeout: 60000, skip: !dbReady }, async t => {
+  const db = createDb(DB_URL);
+  t.after(() => db.close());
+  await db.migrate(MIGRATIONS);
+  await db.query('TRUNCATE treasury_receipts, blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+
+  const blockId = (await db.query(
+    `INSERT INTO blocks (edge_id, boot_id, job_id, nonce, height, state, template_json)
+     VALUES ('e', gen_random_uuid(), 'j', '0x1', 100, 'MATURE', '{"compact_target":"0x191b3f4f"}'::jsonb)
+     RETURNING id`)).rows[0].id;
+
+  const r = await allocateMatureBlock(db, { blockId, logger: { log: () => {} } });
+  assert.strictEqual(r.allocated, false, 'must not allocate without verified income');
+  assert.strictEqual(r.reason, 'awaiting-receipt');
+});
+
+test('allocation uses the receipt amount, not the block cellbase', { timeout: 60000, skip: !dbReady }, async t => {
+  const db = createDb(DB_URL);
+  t.after(() => db.close());
+  await db.migrate(MIGRATIONS);
+  await db.query('TRUNCATE treasury_receipts, blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+
+  // the real 2026-08-15 numbers: block cellbase said 829.54, we received 675.06
+  const blockId = (await db.query(
+    `INSERT INTO blocks (edge_id, boot_id, job_id, nonce, height, state, reward_shannons, template_json)
+     VALUES ('e', gen_random_uuid(), 'j', '0x1', 20160918, 'MATURE', 82954427769,
+             '{"compact_target":"0x191b3f4f"}'::jsonb) RETURNING id`)).rows[0].id;
+  await db.query(
+    `INSERT INTO treasury_receipts
+       (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
+        lock_args, amount_shannons, mature_at_epoch, confirmed_at)
+     VALUES ($1, 20160918, 20160929, $2, 0, '0x5ea0977c3cab6898817c9860fe70d26acf559f76',
+             67506476541, 14750, now())`,
+    [blockId, '0xb59f2292b05d0736ab819a3be90b24bf6400d3ef9e5253f8c0ad0b9415c63ecb']);
+
+  const reward = await rewardForBlock(db, blockId);
+  assert.strictEqual(reward, '67506476541',
+    'the pool may only distribute what it actually received');
+});
+
+test('a voided receipt (reorged payout) is not allocated', { timeout: 60000, skip: !dbReady }, async t => {
+  const db = createDb(DB_URL);
+  t.after(() => db.close());
+  await db.migrate(MIGRATIONS);
+  await db.query('TRUNCATE treasury_receipts, blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+
+  const blockId = (await db.query(
+    `INSERT INTO blocks (edge_id, boot_id, job_id, nonce, height, state, reward_shannons, template_json)
+     VALUES ('e', gen_random_uuid(), 'j', '0x1', 100, 'MATURE', 82954427769,
+             '{"compact_target":"0x191b3f4f"}'::jsonb) RETURNING id`)).rows[0].id;
+  await db.query(
+    `INSERT INTO treasury_receipts
+       (block_id, block_height, payout_block_height, payout_tx_hash, output_index,
+        lock_args, amount_shannons, mature_at_epoch, confirmed_at, voided_at)
+     VALUES ($1, 100, 111, $2, 0, '0x5ea0977c3cab6898817c9860fe70d26acf559f76',
+             67506476541, 14750, now(), now())`,
+    [blockId, '0xb59f2292b05d0736ab819a3be90b24bf6400d3ef9e5253f8c0ad0b9415c63ecb']);
+
+  const reward = await rewardForBlock(db, blockId);
+  assert.strictEqual(reward, null, 'a voided receipt is not verified income');
+
+  const r = await allocateMatureBlock(db, { blockId, logger: { log: () => {} } });
+  assert.strictEqual(r.allocated, false, 'must not allocate on a reorged payment');
+  assert.strictEqual(r.reason, 'awaiting-receipt');
 });

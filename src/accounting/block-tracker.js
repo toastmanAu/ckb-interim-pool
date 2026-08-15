@@ -25,10 +25,16 @@
  *  - candidate block hash = ckb_blake2b(serializeFullHeader(fields, nonce)),
  *    pinned byte-for-byte against a real mainnet block (test/ckb-template.test.js);
  *  - canonical check: get_block_by_number(height).header.hash == candidate hash;
- *  - reward: sum of the canonical cellbase outputs (shannons) — never a constant;
  *  - maturity: CELLBASE_MATURITY = 4 epochs (verified against CKB source
  *    spec/src/consensus.rs). Epoch comparison uses the integer epoch number
  *    (conservative: may delay maturity, never advance it).
+ *
+ * This tracker does NOT extract reward: a block's own cellbase (transactions[0]
+ * of block N) pays the miner of block N-11, so reading it here would record a
+ * stranger's reward — the bug behind the 2026-08-15 154.48 CKB over-record on
+ * block 20160918. Reward reconciliation lives in `src/wallet/reconciler.js`,
+ * which watches the pool's payout address and writes confirmed income to
+ * `treasury_receipts`; `src/accounting/allocator.js` reads it from there.
  */
 
 const { ckbBlake2b } = require('../mining/blake2b.js');
@@ -126,28 +132,23 @@ function createBlockTracker({
         }
         const candidate = candidateBlockHash(template, b.nonce);
         if (candidate === canonicalHash) {
-          const cellbase = canonical.transactions?.[0];
-          let reward = 0n;
-          if (cellbase?.outputs) {
-            for (const out of cellbase.outputs) reward += BigInt(out.capacity);
-          }
           const blockEpochHex = canonical.header.epoch;
           const blockEpoch = parseEpoch(blockEpochHex);
           const mature = tipEpoch.number >= blockEpoch.number + maturityEpochs;
           await db.query(
-            `UPDATE blocks SET state = $1, block_hash = $2, reward_shannons = $3,
-               block_epoch_json = $4,
+            `UPDATE blocks SET state = $1, block_hash = $2,
+               block_epoch_json = $3,
                node_accepted_at = COALESCE(node_accepted_at, now()),
-               matured_at = CASE WHEN $5 THEN now() ELSE matured_at END,
+               matured_at = CASE WHEN $4 THEN now() ELSE matured_at END,
                orphaned_at = NULL
-             WHERE id = $6`,
+             WHERE id = $5`,
             [mature ? 'MATURE' : 'CANONICAL_IMMATURE', '0x' + canonicalHash,
-             reward.toString(), blockEpochHex, mature, b.id],
+             blockEpochHex, mature, b.id],
           );
           if (b.state === 'ORPHANED') {
-            logger.log('BLOCK', `block ${height} RESTORED from ORPHANED — it is canonical (${canonicalHash.slice(0, 16)}…) reward=${reward}`);
+            logger.log('BLOCK', `block ${height} RESTORED from ORPHANED — it is canonical (${canonicalHash.slice(0, 16)}…)`);
           } else {
-            logger.log('BLOCK', `block ${height} canonical (${canonicalHash.slice(0, 16)}…) reward=${reward} ${mature ? 'MATURE' : 'immature'}`);
+            logger.log('BLOCK', `block ${height} canonical (${canonicalHash.slice(0, 16)}…) ${mature ? 'MATURE' : 'immature'}`);
           }
         } else if (b.state === 'ORPHANED') {
           // still absent from the chain — verdict stands, nothing to write
