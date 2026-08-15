@@ -25,14 +25,16 @@ jobs:
         env:
           POSTGRES_USER: pool
           POSTGRES_PASSWORD: pooltest
-          POSTGRES_DB: pooltest
+          # the DB suites TRUNCATE — the CI database is named as disposable so
+          # test/tools/test-db.js will accept it (a live "pooltest" is refused)
+          POSTGRES_DB: pooltest_ci
         ports: ["5433:5432"]
         options: >-
           --health-cmd "pg_isready -U pool"
           --health-interval 5s
           --health-retries 20
     env:
-      POOL_DB_URL: postgres://pool:pooltest@127.0.0.1:5433/pooltest
+      POOL_DB_URL: postgres://pool:pooltest@127.0.0.1:5433/pooltest_ci
       POOL_NATS_URL: nats://127.0.0.1:4223
     steps:
       - uses: actions/checkout@v4

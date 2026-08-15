@@ -17,7 +17,8 @@ const { ckbBlake2b } = require('../src/mining/blake2b.js');
 const { serializeFullHeader } = require('../src/mining/ckb-header.js');
 const { uuidv7 } = require('../src/common/ids.js');
 
-const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
+const { destructiveDbUrl } = require('./tools/test-db.js');
+const DB_URL = destructiveDbUrl();   // refuses to point at the live database
 const MIGRATIONS = path.join(__dirname, '..', 'db', 'migrations');
 
 let dbReady = false;
@@ -164,9 +165,14 @@ test('block lifecycle: canonical → immature → mature; orphan detection', { t
   assert.ok(row.matured_at);
 
   // ── orphan: node tip advanced past height with a different block ─────────
+  // the tip must be at least `orphanConfirmations` past our height: a
+  // mismatch at depth 0 is not proof of anything (see the orphan-verdict
+  // safety suite below), so this fixture advances the tip to make the
+  // verdict provable.
   await db.query('TRUNCATE blocks CASCADE');
   await processEvent(db, shareEvent(10, { block: true, nonce: '0x' + 'cd'.repeat(16) }));
   await processEvent(db, { ...blockSubmitEvent(11, shareEvent(10, { block: true, nonce: '0x' + 'cd'.repeat(16) })), nonce: '0x' + 'cd'.repeat(16), height: parseInt(HDR.number, 16) });
+  node.handlers.get_tip_header = () => ({ number: '0x' + (parseInt(HDR.number, 16) + 3).toString(16), epoch: epochHex(5), hash: '0x' + BLOCK_HASH });
   node.handlers.get_block_by_number = () => ({
     header: { hash: '0x' + 'ff'.repeat(32), epoch: HDR.epoch },
     transactions: [{ outputs: [{ capacity: '0x1' }] }],
@@ -177,4 +183,144 @@ test('block lifecycle: canonical → immature → mature; orphan detection', { t
 
   // ── candidateBlockHash is pure and matches the fixture-proven formula ────
   assert.strictEqual(candidateBlockHash(HDR, NONCE), BLOCK_HASH);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// Orphan-verdict safety (incident 2026-08-14).
+//
+// Two won mainnet blocks were marked ORPHANED while canonical, because a
+// stale build recomputed the candidate hash with the un-reversed nonce. The
+// hash bug was the trigger; these tests pin the two design faults that turned
+// it into silent, unrecoverable loss:
+//
+//   1. any hash mismatch was treated as PROOF of orphaning, at zero
+//      confirmations, with no third outcome for "cannot tell yet";
+//   2. ORPHANED was terminal — nothing ever re-examined the verdict, so truth
+//      arriving later could not correct it.
+//
+// A real orphan is provable positively: our hash is absent from a height the
+// chain has since built past. Anything else is "unknown", not "lost".
+// ───────────────────────────────────────────────────────────────────────────
+
+const HEIGHT = parseInt(HDR.number, 16);
+const hx = n => '0x' + n.toString(16);
+
+function makeControllableNode() {
+  const state = {
+    tipNumber: HDR.number,
+    tipEpoch: HDR.epoch,
+    canonicalHash: BLOCK_HASH,
+    blockNull: false,
+    reward: 110000000000n,
+  };
+  return {
+    state,
+    async rpc(method) {
+      if (method === 'get_tip_header') {
+        return { number: state.tipNumber, epoch: state.tipEpoch, hash: '0x' + state.canonicalHash };
+      }
+      if (method === 'get_block_by_number') {
+        if (state.blockNull) return null;
+        return {
+          header: { hash: '0x' + state.canonicalHash, epoch: HDR.epoch },
+          transactions: [{ outputs: [{ capacity: '0x' + state.reward.toString(16) }] }],
+        };
+      }
+      throw new Error('unexpected rpc ' + method);
+    },
+  };
+}
+
+async function seedAcceptedBlock(db, seq, nonce) {
+  const s = shareEvent(seq, { block: true, nonce });
+  await processEvent(db, s);
+  await processEvent(db, { ...blockSubmitEvent(seq + 1, s), nonce });
+}
+
+const stateOf = async (db, nonce) =>
+  (await db.query(`SELECT state, orphaned_at, block_hash FROM blocks WHERE nonce = $1`, [nonce])).rows[0];
+
+test('orphan verdicts require positive proof and stay correctable', { timeout: 60000, skip: !dbReady }, async t => {
+  const db = createDb(DB_URL);
+  t.after(() => db.close());
+  await db.migrate(MIGRATIONS);
+
+  const quiet = { log: () => {} };
+
+  await t.test('a hash mismatch at the tip does NOT orphan — not deep enough to tell', async () => {
+    await db.query('TRUNCATE blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+    const node = makeControllableNode();
+    node.state.canonicalHash = 'ff'.repeat(32);   // some other block, for now
+    node.state.tipNumber = hx(HEIGHT);            // zero confirmations past us
+    const tracker = createBlockTracker({ db, rpcClient: node, logger: quiet });
+
+    await seedAcceptedBlock(db, 1, NONCE);
+    await tracker.tick();
+
+    assert.strictEqual((await stateOf(db, NONCE)).state, 'NODE_ACCEPTED',
+      'at tip+0 the chain has not yet decided — must not be called ORPHANED');
+  });
+
+  await t.test('a null block from the node never orphans', async () => {
+    await db.query('TRUNCATE blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+    const node = makeControllableNode();
+    node.state.blockNull = true;                  // node has no block at that height yet
+    node.state.tipNumber = hx(HEIGHT + 10);
+    const tracker = createBlockTracker({ db, rpcClient: node, logger: quiet });
+
+    await seedAcceptedBlock(db, 10, NONCE);
+    await tracker.tick();                         // must not throw, must not orphan
+
+    assert.strictEqual((await stateOf(db, NONCE)).state, 'NODE_ACCEPTED',
+      'a failed lookup is missing evidence, not evidence of loss');
+  });
+
+  await t.test('orphan IS declared once the chain has built past us', async () => {
+    await db.query('TRUNCATE blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+    const node = makeControllableNode();
+    node.state.canonicalHash = 'ff'.repeat(32);
+    node.state.tipNumber = hx(HEIGHT + 3);        // confirmations satisfied
+    const tracker = createBlockTracker({ db, rpcClient: node, logger: quiet, orphanConfirmations: 3 });
+
+    await seedAcceptedBlock(db, 20, NONCE);
+    await tracker.tick();
+
+    assert.strictEqual((await stateOf(db, NONCE)).state, 'ORPHANED',
+      'a genuinely lost block must still be detected');
+  });
+
+  await t.test('a wrongly-orphaned block is restored when the chain shows it canonical', async () => {
+    await db.query('TRUNCATE blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+    const node = makeControllableNode();
+    node.state.canonicalHash = BLOCK_HASH;        // it was ours all along
+    node.state.tipNumber = hx(HEIGHT + 3);
+    const tracker = createBlockTracker({ db, rpcClient: node, logger: quiet });
+
+    await seedAcceptedBlock(db, 30, NONCE);
+    await db.query(`UPDATE blocks SET state = 'ORPHANED', orphaned_at = now() WHERE nonce = $1`, [NONCE]);
+
+    await tracker.tick();
+
+    const row = await stateOf(db, NONCE);
+    assert.strictEqual(row.state, 'CANONICAL_IMMATURE', 'the verdict must be correctable');
+    assert.strictEqual(row.orphaned_at, null, 'orphaned_at must be cleared on restore');
+    assert.strictEqual(row.block_hash, '0x' + BLOCK_HASH);
+  });
+
+  await t.test('orphan re-verification is bounded — deeply buried orphans are left alone', async () => {
+    await db.query('TRUNCATE blocks, share_events, ingested_events, sessions, workers, miners, edge_boots, edges CASCADE');
+    const node = makeControllableNode();
+    node.state.canonicalHash = BLOCK_HASH;
+    node.state.tipNumber = hx(HEIGHT + 5000);     // far beyond any possible reorg
+    const tracker = createBlockTracker({ db, rpcClient: node, logger: quiet, orphanRecheckDepth: 1000 });
+
+    await seedAcceptedBlock(db, 40, NONCE);
+    await db.query(`UPDATE blocks SET state = 'ORPHANED', orphaned_at = now() WHERE nonce = $1`, [NONCE]);
+
+    await tracker.tick();
+
+    assert.strictEqual((await stateOf(db, NONCE)).state, 'ORPHANED',
+      're-checking every orphan forever is unbounded work; past the reorg ' +
+      'horizon the verdict is final (repair those by hand, deliberately)');
+  });
 });

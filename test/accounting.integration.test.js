@@ -21,7 +21,8 @@ const { processEvent } = require('../src/accounting/ingest.js');
 const { createNatsTransport } = require('../src/events/nats-transport.js');
 const { uuidv7 } = require('../src/common/ids.js');
 
-const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
+const { destructiveDbUrl } = require('./tools/test-db.js');
+const DB_URL = destructiveDbUrl();   // refuses to point at the live database
 const NATS_URL = process.env.POOL_NATS_URL || 'nats://127.0.0.1:4223';
 const STREAM = 'POOL_V1_ACCT_TEST';
 const MIGRATIONS = require('node:path').join(__dirname, '..', 'db', 'migrations');

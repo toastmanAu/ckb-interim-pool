@@ -5,13 +5,16 @@
  *
  *   poolctl block show <hash>
  *   poolctl block recompute-allocation <hash>
+ *   poolctl block recheck <hash|height>     (reopen an ORPHANED verdict)
  *   poolctl miner balance <address>
  *   poolctl ledger verify
  *   poolctl payout dry-run
  *   poolctl payout inspect <batch-id>
  *   poolctl events replay-status
  *
- * Read-only except `payout dry-run` (builds a document, broadcasts nothing).
+ * Read-only except `payout dry-run` (builds a document, broadcasts nothing)
+ * and `block recheck` (reopens a verdict for re-verification; decides nothing
+ * itself — the tracker re-proves the state against the node).
  */
 
 const { createDb } = require('./db.js');
@@ -75,7 +78,39 @@ async function cmdBlock(db, [action, hash]) {
     console.log(JSON.stringify({ stored_hash: stored?.allocation_hash, recomputed_hash: recomputed.allocationHash, match }, null, 2));
     return;
   }
-  console.error('usage: poolctl block <show|recompute-allocation> <hash>');
+  if (action === 'recheck') {
+    // Reopen an ORPHANED verdict for re-verification against the chain.
+    //
+    // The tracker corrects its own mistakes automatically only while a block
+    // is within orphanRecheckDepth of the tip; past that the verdict is final
+    // by design (re-polling every historical orphan forever is unbounded
+    // work). This is the deliberate, audited way to reopen an older one —
+    // needed on 2026-08-15 to recover two canonical blocks written off by a
+    // stale tracker four days deep.
+    //
+    // It does NOT decide anything: it resets the row to NODE_ACCEPTED and
+    // lets the running tracker prove canonicality against the node. If the
+    // block really was orphaned, the next tick marks it ORPHANED again.
+    const b = (await db.query(
+      `SELECT id::text, height, state FROM blocks WHERE block_hash = $1 OR id::text = $1 OR height::text = $1`,
+      [hash],
+    )).rows[0];
+    if (!b) { console.error('block not found'); process.exit(1); }
+    if (b.state !== 'ORPHANED') {
+      console.error(`block ${b.height} is ${b.state}, not ORPHANED — nothing to recheck`);
+      process.exit(1);
+    }
+    await db.query(
+      `UPDATE blocks SET state = 'NODE_ACCEPTED', orphaned_at = NULL WHERE id = $1 AND state = 'ORPHANED'`,
+      [b.id],
+    );
+    console.log(JSON.stringify({
+      block: b.id, height: b.height, from: 'ORPHANED', to: 'NODE_ACCEPTED',
+      note: 'the tracker will re-verify against the node on its next tick; run `poolctl block show` to see the verdict',
+    }, null, 2));
+    return;
+  }
+  console.error('usage: poolctl block <show|recompute-allocation|recheck> <hash|height>');
   process.exit(2);
 }
 
@@ -96,17 +131,38 @@ async function cmdMiner(db, [action, address]) {
 }
 
 async function cmdLedger(db) {
-  const blocks = (await db.query(`SELECT id::text, reward_shannons FROM blocks WHERE reward_shannons IS NOT NULL`)).rows;
+  // Only blocks that have been ALLOCATED have ledger entries to conserve. A
+  // canonical-but-immature block legitimately has a reward and no entries —
+  // auditing it reports a "CONSERVATION FAILURE" for a block that is simply
+  // waiting for maturity. This must match block-service.js's audit scope; if
+  // the operator's audit tool cries wolf, the LedgerConservation alert ("STOP
+  // payouts until audited") becomes unactionable.
+  const blocks = (await db.query(
+    `SELECT id::text, reward_shannons FROM blocks
+     WHERE reward_shannons IS NOT NULL AND state IN ('ALLOCATED', 'SETTLED_TO_LEDGER')`,
+  )).rows;
   let ok = true;
   for (const b of blocks) {
     const conserved = await verifyBlockConservation(db, b.id, b.reward_shannons);
     if (!conserved) { ok = false; console.error(`CONSERVATION FAILURE: block ${b.id}`); }
   }
+  // reported, not audited: visible so an allocation that never runs cannot
+  // hide behind an empty check
+  const pending = (await db.query(
+    `SELECT count(*)::int c FROM blocks
+     WHERE reward_shannons IS NOT NULL AND state NOT IN ('ALLOCATED', 'SETTLED_TO_LEDGER')`,
+  )).rows[0].c;
   const entries = (await db.query(`SELECT count(*)::int c FROM ledger_entries`)).rows[0].c;
   const dupKeys = (await db.query(
     `SELECT idempotency_key, count(*) c FROM ledger_entries GROUP BY idempotency_key HAVING count(*) > 1`,
   )).rows;
-  console.log(JSON.stringify({ blocks_checked: blocks.length, conserved: ok, ledger_entries: entries, duplicate_idempotency_keys: dupKeys.length }, null, 2));
+  console.log(JSON.stringify({
+    blocks_checked: blocks.length,
+    conserved: ok,
+    blocks_awaiting_allocation: pending,
+    ledger_entries: entries,
+    duplicate_idempotency_keys: dupKeys.length,
+  }, null, 2));
   if (!ok || dupKeys.length > 0) process.exit(1);
 }
 

@@ -230,6 +230,53 @@ test('edge sink: events flow through spool to transport; replay after outage', a
   sink2.close();
 });
 
+// A block the node REJECTS is the event most worth keeping, and it is the one
+// carrying an unbounded error string. On 2026-08-14 a real rejected submission
+// (height 20142765, a ~330-char CKB InvalidNonce message) failed validation
+// against maxLength 256 and was dropped as invalid — the rejection left no
+// trace in accounting at all. The producer must clamp to the schema bound.
+test('a verbose node rejection still produces a schema-valid block-submit event', () => {
+  const ckbInvalidNonce =
+    'rejected:{"code":-3,"message":"Invalid: Header(Pow(InvalidNonce: please set ' +
+    'logger.filter to \\"info,ckb-pow=debug\\" for detailed PoW verification ' +
+    'information))","data":"Error { kind: Header, inner: Pow(InvalidNonce: please ' +
+    'set logger.filter to \\"info,ckb-pow=debug\\" for detailed PoW verification ' +
+    'information) }"}';
+  assert.ok(ckbInvalidNonce.length > 256, 'fixture must exceed the old bound to be meaningful');
+
+  const evt = {
+    schema: 'pool.block.submit.v1',
+    event_id: 'c'.repeat(32),
+    edge_id: 'test-edge-01',
+    edge_boot_id: BOOT,
+    edge_seq: 3,
+    session_id: '2'.repeat(32),
+    payout_address: 'ckb1qyqt8xaupvm8837nv3gtc9x0ekkj64vud3jqfwyw5v',
+    worker: 'k7-01',
+    job_id: 'aabbccdd00000001',
+    template_work_id: '0x1',
+    nonce: '0x' + '11'.repeat(16),
+    height: 100,
+    parent_hash: '0x' + '00'.repeat(31) + '01',
+    candidate_block_hash: null,
+    node_submit_result: ckbInvalidNonce,
+    submit_ok: false,
+    submit_latency_ms: 5,
+    submitted_at_ms: 1700000000000,
+    work_units: '4294967295',
+    header: {
+      version: '0x0', compact_target: '0x191b3f4f', current_time: '0x1e1e1e1e',
+      number: '0x64', epoch: '0x0', parent_hash: '0x' + '00'.repeat(31) + '01',
+      transactions_root: '0x' + '11'.repeat(32), proposals_hash: '0x' + '22'.repeat(32),
+      extra_hash: '0x' + '33'.repeat(32), dao: '0x' + '44'.repeat(32),
+      nonce: '0x' + '11'.repeat(16),
+    },
+  };
+
+  const v = validate(evt);
+  assert.ok(v.ok, `real CKB rejection must validate, got: ${JSON.stringify(v.errors)}`);
+});
+
 test('edge sink: sink throws on spool failure so the edge can fail closed', async () => {
   const dir = tmpDir();
   const config = {

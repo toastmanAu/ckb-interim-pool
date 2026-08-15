@@ -13,6 +13,7 @@ const { connect, StringCodec } = require('nats');
 const { createDb } = require('./db.js');
 const { processEvent, seqGaps } = require('./ingest.js');
 const { createBlockService } = require('./block-service.js');
+const { BUILD_INFO } = require('../common/build-info.js');
 
 const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
 const NATS_URL = process.env.POOL_NATS_URL || 'nats://127.0.0.1:4223';
@@ -37,11 +38,16 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
   require('node:http').createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, stream: STREAM, subjects: SUBJECTS, ...metrics }));
+      res.end(JSON.stringify({ ok: true, stream: STREAM, subjects: SUBJECTS, build: BUILD_INFO, ...metrics }));
       return;
     }
     if (req.url === '/metrics') {
       const lines = [
+        // which commit this PROCESS loaded — compare against the deployed tree
+        // to catch a service still running pre-fix code (deploy/check-stale.sh)
+        '# HELP pool_build_info commit this process was started from (1 = always)',
+        '# TYPE pool_build_info gauge',
+        `pool_build_info{commit="${BUILD_INFO.commit || 'unknown'}",started_at="${BUILD_INFO.startedAt}"} 1`,
         `pool_ingest_events_applied_total ${metrics.applied}`,
         `pool_ingest_events_duplicate_total ${metrics.duplicates}`,
         `pool_ingest_events_invalid_total ${metrics.invalid}`,

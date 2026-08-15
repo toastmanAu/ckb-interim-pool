@@ -29,6 +29,9 @@ const { validateShare, REJECT_REASON } = require('./share-validator.js');
 const { targetLEToWorkUnits, workUnitsToQ } = require('../pplns/work-units.js');
 const { createMetrics } = require('../common/metrics.js');
 
+// must match schemas/pool.block.submit.v1.schema.json → node_submit_result
+const MAX_SUBMIT_RESULT_CHARS = 1024;
+
 const STRATUM_ERROR = {
   LOW_DIFFICULTY: [23, 'Low difficulty share', null],
   UNAUTHORIZED: [24, 'Unauthorized worker', null],
@@ -199,7 +202,14 @@ function createEdgeServer({ config, templateService, blockSubmitter, sink, logge
       height: job.height,
       parent_hash: job.parentHash,
       candidate_block_hash: null,   // set by node acceptance / central tracking
-      node_submit_result: submitResult.ok ? 'accepted' : `rejected:${submitResult.error}`,
+      // node rejection messages are unbounded (CKB's PoW errors run to ~330
+      // chars); an over-long value fails schema validation and the whole
+      // block-submit event is dropped as invalid — losing the record of a
+      // REJECTED block, which is exactly the one worth keeping. Clamp to the
+      // schema bound at the producer.
+      node_submit_result: submitResult.ok
+        ? 'accepted'
+        : `rejected:${submitResult.error}`.slice(0, MAX_SUBMIT_RESULT_CHARS),
       submit_ok: submitResult.ok,
       submit_latency_ms: submitResult.latencyMs,
       submitted_at_ms: now,

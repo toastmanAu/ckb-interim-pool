@@ -46,10 +46,28 @@ groups:
         annotations: { summary: "ingest alive but no events flowing — edges or bus issue" }
 
       # ── block lifecycle (exposed by the accounting block-service) ─────────
+      # pool_blocks_orphaned_total is a GAUGE (count of ORPHANED rows), so
+      # delta() is the correct function — increase() assumes a counter and
+      # misreads the drop when a wrong verdict is corrected as a reset.
       - alert: BlockOrphaned
-        expr: increase(pool_blocks_orphaned_total[1h]) > 0
+        expr: delta(pool_blocks_orphaned_total[1h]) > 0
         labels: { severity: critical }
-        annotations: { summary: "a found block was orphaned before credit" }
+        annotations:
+          summary: "a found block was orphaned before credit"
+          description: >-
+            Verify against the chain before accepting this: on 2026-08-14 two
+            CANONICAL blocks were marked ORPHANED by a stale tracker. Check
+            get_block_by_number(height).header.hash against the block's
+            recomputed candidate hash before writing the reward off.
+
+      # a service running older code than the deployed tree (see
+      # deploy/check-stale.sh) — the 2026-08-14 root cause
+      - alert: ServiceBuildStale
+        expr: count(count by (commit) (pool_build_info)) > 1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "pool services are running different commits — one is stale"
       - alert: LedgerConservation
         expr: pool_ledger_conservation_failures_total > 0
         labels: { severity: critical }

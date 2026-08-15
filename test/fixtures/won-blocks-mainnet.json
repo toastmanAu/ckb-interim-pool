@@ -1,0 +1,51 @@
+{
+ "source": "CKB mainnet, read from the pool's trusted node (get_header_by_number / get_block_by_number)",
+ "blocks": [
+  {
+   "note": "block won by wyltek-pool au-adelaide-01 on 2026-08-14; falsely marked ORPHANED by a stale block-tracker (nonce byte order). Pins nonce semantics + candidateBlockHash against the real chain.",
+   "height": 20152836,
+   "raw_nonce": "0x019ff8f6000000030d00005e309a5693",
+   "canonical_hash": "0xc95233c188ddb699feb20e4547a7bf5c5d621cfdfb1d9f7684b3526117bc326b",
+   "canonical_nonce": "0x93569a305e00000d03000000f6f89f01",
+   "canonical_parent_hash": "0x7a5795fa0650398506c266a797a384fff35020a6998ca75bac3f19d8a2cd4adc",
+   "child_parent_hash": "0xc95233c188ddb699feb20e4547a7bf5c5d621cfdfb1d9f7684b3526117bc326b",
+   "reward_shannons": "80245035867",
+   "template": {
+    "dao": "0x72e926973ce7745ae4dc581cb4b02a00be1ef060f0bc360a00eda41976ef3707",
+    "epoch": "0x4e80241003994",
+    "nonce": "0x019ff8f6000000030d00005e309a5693",
+    "number": "0x1338204",
+    "version": "0x0",
+    "extra_hash": "0xe9dd37a89b1da5c8628aa2624ba07b894dbb03b67c88e1d166163c0eeeac0341",
+    "parent_hash": "0x7a5795fa0650398506c266a797a384fff35020a6998ca75bac3f19d8a2cd4adc",
+    "current_time": "0x19ffe1f64f9",
+    "compact_target": "0x1917912b",
+    "proposals_hash": "0x13b8e4c6a7887198104aa9561416f4ef2e3cdbd1bce28fbd4e5a49d0c3faf0ff",
+    "transactions_root": "0x6b203ca06ee40037b7c3e1985107f3e8bffbce495775de0e84df3c8c6ebfb35b"
+   }
+  },
+  {
+   "note": "block won by wyltek-pool au-adelaide-01 on 2026-08-14; falsely marked ORPHANED by a stale block-tracker (nonce byte order). Pins nonce semantics + candidateBlockHash against the real chain.",
+   "height": 20153038,
+   "raw_nonce": "0x019ff8f600000004000040660e8b24fc",
+   "canonical_hash": "0x6b90225a9c4af637c94c1145ca39abf7eed26209ab436e564ebb7b63d911a3ed",
+   "canonical_nonce": "0xfc248b0e6640000004000000f6f89f01",
+   "canonical_parent_hash": "0x88d900a2ecb9b618f2318648df3c0bba96c22d676a5844c8097e471bc4121dce",
+   "child_parent_hash": "0x6b90225a9c4af637c94c1145ca39abf7eed26209ab436e564ebb7b63d911a3ed",
+   "reward_shannons": "80244726168",
+   "template": {
+    "dao": "0x44b8714f3dfe745ae386e258b8b02a00b9e53d0b33c5360a00715de1b8cb3707",
+    "epoch": "0x4e8030b003994",
+    "nonce": "0x019ff8f600000004000040660e8b24fc",
+    "number": "0x13382ce",
+    "version": "0x0",
+    "extra_hash": "0xc4270709a4b78a382f2cb839604c00e573dd1e6cf810056ab2738831778c88d6",
+    "parent_hash": "0x88d900a2ecb9b618f2318648df3c0bba96c22d676a5844c8097e471bc4121dce",
+    "current_time": "0x19ffe445d4f",
+    "compact_target": "0x1917912b",
+    "proposals_hash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "transactions_root": "0x444cbad4536ef7dafde89bf8338bae3e623359785f276a3b3e66bef52e1d829f"
+   }
+  }
+ ]
+}

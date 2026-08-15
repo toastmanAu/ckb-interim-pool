@@ -12,7 +12,8 @@ const { createApiServer } = require('../src/api/api-server.js');
 const { postEntry, ACCOUNTS } = require('../src/accounting/ledger.js');
 const { uuidv7 } = require('../src/common/ids.js');
 
-const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
+const { destructiveDbUrl } = require('./tools/test-db.js');
+const DB_URL = destructiveDbUrl();   // refuses to point at the live database
 const MIGRATIONS = path.join(__dirname, '..', 'db', 'migrations');
 
 let dbReady = false;

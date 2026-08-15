@@ -26,7 +26,7 @@
     "height": { "type": "integer", "minimum": 0 },
     "parent_hash": { "type": "string", "pattern": "^0x[0-9a-f]{64}$" },
     "candidate_block_hash": { "type": ["string", "null"] },
-    "node_submit_result": { "type": "string", "maxLength": 256 },
+    "node_submit_result": { "type": "string", "maxLength": 1024 },
     "submit_ok": { "type": "boolean" },
     "submit_latency_ms": { "type": "integer", "minimum": 0 },
     "submitted_at_ms": { "type": "integer", "minimum": 0 },
