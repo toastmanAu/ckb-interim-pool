@@ -675,7 +675,7 @@ git commit -m "wallet: receipt matching pinned to recorded mainnet H/H+11 pairs"
 
 **Interfaces:**
 - Consumes: `matchReceipt` (Task 3), `createRpcClient` from `src/edge/rpc.js`
-- Produces: `createReconciler({ db, rpcClient, confirmations = 20, logger }) -> { tick(), reconcileBlock(blockRow), confirmPending(tipHeight) }`
+- Produces: `createReconciler({ db, rpcClient, confirmations = 20, logger }) -> { tick(), reconcileBlock(blockRow, tipHeight) }`. Confirmation is not a separate entry point: `reconcileBlock` confirms a receipt in the same pass that re-examines it, once the payout block is `confirmations` deep. (Corrected 2026-08-15 — this line previously advertised a `confirmPending(tipHeight)` that the task's own code never returned and no caller ever used.)
 
 - [ ] **Step 1: Write the failing test**
 
