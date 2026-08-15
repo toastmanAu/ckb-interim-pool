@@ -21,8 +21,47 @@ const path = require('node:path');
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 
-/** Resolve HEAD to a commit sha, following a symbolic ref into refs/ or packed-refs. */
-function resolveHead(gitDir) {
+/**
+ * Locate the git directories for a checkout.
+ *
+ * In a normal checkout `.git` is a directory and is its own common dir. In a
+ * LINKED WORKTREE `.git` is a file containing `gitdir: <path>`; HEAD lives in
+ * that per-worktree gitdir while refs live in the common dir it names via its
+ * `commondir` file. Missing this makes a worktree deployment report
+ * commit=unknown, which check-stale.sh reads as an un-stamped — therefore
+ * stale — service.
+ *
+ * @returns {{gitDir: string, commonDir: string}|null}
+ */
+function resolveGitDirs(root) {
+  const dotGit = path.join(root, '.git');
+
+  let stat;
+  try { stat = fs.statSync(dotGit); } catch { return null; }
+  if (stat.isDirectory()) return { gitDir: dotGit, commonDir: dotGit };
+
+  let pointer;
+  try { pointer = fs.readFileSync(dotGit, 'utf8').trim(); } catch { return null; }
+  const m = /^gitdir:\s*(.+)$/.exec(pointer);
+  if (!m) return null;
+  // the pointer may be absolute or relative to the worktree root
+  const gitDir = path.resolve(root, m[1].trim());
+
+  let commonDir = gitDir;
+  try {
+    const rel = fs.readFileSync(path.join(gitDir, 'commondir'), 'utf8').trim();
+    if (rel) commonDir = path.resolve(gitDir, rel);
+  } catch { /* no commondir — gitDir is its own common dir */ }
+
+  return { gitDir, commonDir };
+}
+
+/**
+ * Resolve HEAD to a commit sha, following a symbolic ref into refs/ or
+ * packed-refs. HEAD is read from `gitDir` (per-worktree); refs are read from
+ * `commonDir`, which is the same directory outside a linked worktree.
+ */
+function resolveHead(gitDir, commonDir = gitDir) {
   let head;
   try { head = fs.readFileSync(path.join(gitDir, 'HEAD'), 'utf8').trim(); }
   catch { return null; }
@@ -34,12 +73,12 @@ function resolveHead(gitDir) {
   const ref = m[1].trim();
 
   try {
-    const direct = fs.readFileSync(path.join(gitDir, ref), 'utf8').trim();
+    const direct = fs.readFileSync(path.join(commonDir, ref), 'utf8').trim();
     if (SHA_RE.test(direct)) return direct;
   } catch { /* fall through to packed-refs */ }
 
   try {
-    for (const line of fs.readFileSync(path.join(gitDir, 'packed-refs'), 'utf8').split('\n')) {
+    for (const line of fs.readFileSync(path.join(commonDir, 'packed-refs'), 'utf8').split('\n')) {
       if (!line || line.startsWith('#') || line.startsWith('^')) continue;
       const [sha, name] = line.trim().split(/\s+/);
       if (name === ref && SHA_RE.test(sha)) return sha;
@@ -54,8 +93,8 @@ function resolveHead(gitDir) {
  * @returns {{commit: string|null, commitShort: string|null, startedAt: string, pid: number}}
  */
 function readBuildInfo(root = path.join(__dirname, '..', '..')) {
-  const gitDir = path.join(root, '.git');
-  const commit = resolveHead(gitDir);
+  const dirs = resolveGitDirs(root);
+  const commit = dirs ? resolveHead(dirs.gitDir, dirs.commonDir) : null;
   return {
     commit,
     commitShort: commit ? commit.slice(0, 7) : null,
@@ -67,4 +106,4 @@ function readBuildInfo(root = path.join(__dirname, '..', '..')) {
 // captured once, at module load — deliberately not re-read later
 const BUILD_INFO = readBuildInfo();
 
-module.exports = { BUILD_INFO, readBuildInfo, resolveHead };
+module.exports = { BUILD_INFO, readBuildInfo, resolveHead, resolveGitDirs };
