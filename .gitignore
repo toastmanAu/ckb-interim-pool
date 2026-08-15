@@ -1,6 +1,9 @@
 k7-session-logs/
 spool-k7-test/
 soak-out/
+# isolated worktrees + subagent-driven-development scratch (never committed)
+.worktrees/
+.superpowers/
 # secrets / local material — never commit
 deploy/nats-tls/
 *.key
