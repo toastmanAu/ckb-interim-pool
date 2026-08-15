@@ -73,4 +73,17 @@ test('treasury schema', { timeout: 60000, skip: !dbReady }, async t => {
       () => db.query(`INSERT INTO wallet_config (id, cold_address) VALUES (2, 'ckb1def')`),
       /check|constraint/i);
   });
+
+  await t.test('payout_batches gained the approval columns', async () => {
+    const { rows } = await db.query(
+      `SELECT column_name, data_type FROM information_schema.columns
+        WHERE table_name = 'payout_batches'
+          AND column_name IN ('released_by', 'released_at')
+        ORDER BY column_name`);
+    const byName = Object.fromEntries(rows.map(r => [r.column_name, r.data_type]));
+    assert.strictEqual(byName.released_at, 'timestamp with time zone',
+      'released_at must exist and be timestamptz');
+    assert.strictEqual(byName.released_by, 'text',
+      'released_by must exist and be text');
+  });
 });
