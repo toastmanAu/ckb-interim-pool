@@ -51,6 +51,13 @@ function matchReceipt({ blockHeight, cellbaseWitness, payoutBlock }) {
   if (matches.length === 0) return null;
 
   const total = matches.reduce((acc, m) => acc + m.capacity, 0n);
+  const epoch = parseEpoch(payoutBlock.header.epoch);
+  // A CKB epoch carries a fraction (index/length) and cellbase maturity is
+  // measured on the full EpochNumberWithFraction. Truncating to the integer
+  // number reports maturity up to a whole epoch EARLY, and a spend gated on
+  // that is rejected by the node as immature. Round UP so the recorded value
+  // is never early: at worst it delays a spend by part of an epoch.
+  const matureAtEpoch = epoch.number + (epoch.index > 0 ? 1 : 0) + CELLBASE_MATURITY_EPOCHS;
   return {
     lockArgs: lock.args,
     payoutBlockHeight: actual,
@@ -59,7 +66,7 @@ function matchReceipt({ blockHeight, cellbaseWitness, payoutBlock }) {
     // sum and the index records the first — the UNIQUE(tx,index) key still holds
     outputIndex: matches[0].index,
     amountShannons: total.toString(),
-    matureAtEpoch: parseEpoch(payoutBlock.header.epoch).number + CELLBASE_MATURITY_EPOCHS,
+    matureAtEpoch,
   };
 }
 

@@ -41,9 +41,20 @@ for (const c of FX.cases) {
 
 test('the recorded reward differs from the block\'s own cellbase — that was the bug', () => {
   const bad = FX.cases.find(c => c.blockHeight === 20160918);
-  assert.notStrictEqual(bad.amountShannons, bad.accountingRecordedShannons);
-  const delta = BigInt(bad.accountingRecordedShannons) - BigInt(bad.amountShannons);
+  const r = matchReceipt({
+    blockHeight: bad.blockHeight,
+    cellbaseWitness: bad.cellbaseWitness,
+    payoutBlock: bad.payoutBlock,
+  });
+  assert.notStrictEqual(r.amountShannons, bad.accountingRecordedShannons);
+  const delta = BigInt(bad.accountingRecordedShannons) - BigInt(r.amountShannons);
   assert.ok(delta > 15000000000n, `over-record should exceed 150 CKB, got ${delta}`);
+});
+
+test('fixture exercises more than one miner lock', () => {
+  const locks = new Set(FX.cases.map(c => c.expectedLockArgs));
+  assert.ok(locks.size > 1,
+    'with a single lock, an implementation that ignored the witness would still pass');
 });
 
 test('refuses a payout block at the wrong height rather than guessing', () => {
