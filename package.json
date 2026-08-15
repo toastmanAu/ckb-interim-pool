@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/ckb-merkle.test.js test/ckb-target.test.js test/ckb-template.test.js test/block-hash-regression.test.js test/build-info.test.js test/job-registry.test.js test/miner-family.test.js test/username.test.js test/events.test.js test/edge.integration.test.js test/payout-tx.test.js",
+    "test": "node --test test/ckb-merkle.test.js test/ckb-target.test.js test/ckb-template.test.js test/block-hash-regression.test.js test/cellbase-witness.test.js test/build-info.test.js test/job-registry.test.js test/miner-family.test.js test/username.test.js test/events.test.js test/edge.integration.test.js test/payout-tx.test.js",
     "test:nats": "node --test --test-force-exit test/nats-pipeline.test.js",
     "test:all": "npm run test && npm run test:nats",
     "lint": "node --check src/edge/edge-server.js && node --check src/edge/template-service.js && node --check src/events/spool.js && node --check src/events/publisher.js && node --check src/events/edge-sink.js",
