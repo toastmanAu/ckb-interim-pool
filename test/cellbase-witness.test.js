@@ -34,6 +34,7 @@ test('rejects a table whose declared size disagrees with the buffer', () => {
 });
 
 test('rejects an offset pointing past the end', () => {
-  // full_size 12, first offset 0xffff
-  assert.throws(() => parseCellbaseWitness('0x0c000000ffff0000'), /molecule/i);
+  // 20 bytes: full_size = 20 (matches buffer), offsets = [12, 999 (0x03e7)]
+  // offset 999 exceeds buffer length 20, triggering the offset-bounds check
+  assert.throws(() => parseCellbaseWitness('0x140000000c000000e70300000000000000000000'), /offset 999 past end/);
 });
