@@ -29,23 +29,27 @@ test('receipt metrics are typed as gauges, not counters', () => {
     'a _total suffix would assert a monotonic counter, which these are not');
 });
 
-test('only the keystore may reference key bytes; no wallet module may sign or broadcast yet', () => {
-  // Task 1 introduces key loading but no spending path. Keep the exception
-  // symbol-specific so adding signing or broadcast capability still requires
-  // a deliberate guard change when the transaction builder moves in Task 6.
+test('only designated wallet modules may reference key or signing material', () => {
+  // Task 4 moves the existing payout builders into the wallet boundary. Keep
+  // an exact allowlist so a new signing-capable module requires review.
   const fs = require('node:fs');
   const path = require('node:path');
   const dir = path.dirname(require.resolve('../src/wallet/main.js'));
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
-  const permitted = { privateKey: new Set(['keystore.js']) };
+  const maySign = new Set([
+    'keystore.js',
+    'tx-builder.js',
+    'tx-builder-inprocess.js',
+    'tx-builder-stub.js',
+  ]);
 
   assert.ok(files.length >= 4, `expected the wallet directory to be scanned, saw ${files.length} file(s)`);
   for (const file of files) {
+    if (maySign.has(file)) continue;
     const src = fs.readFileSync(path.join(dir, file), 'utf8');
     for (const forbidden of ['privateKey', 'send_transaction', 'sign(', 'POOL_WALLET_KEY']) {
-      if (permitted[forbidden]?.has(file)) continue;
       assert.ok(!src.includes(forbidden),
-        `wallet must not be able to move funds; found "${forbidden}" in src/wallet/${file}`);
+        `non-signing wallet module referenced "${forbidden}" in src/wallet/${file}`);
     }
   }
 });

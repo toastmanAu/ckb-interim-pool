@@ -8,7 +8,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { execSync } = require('node:child_process');
 
-const { buildAndSendPayout } = require('../src/payout/ckb-tx-builder.js');
+const { buildAndSendPayout } = require('../src/wallet/tx-builder.js');
 const merkle = require('../src/mining/ckb-merkle.js');
 
 const DEV_RPC = process.env.DEV_RPC || 'http://127.0.0.1:8115';

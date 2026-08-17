@@ -10,7 +10,7 @@
 
 const fs = require('node:fs');
 const { secp256k1 } = require('@noble/curves/secp256k1.js');
-const { lockOf } = require('../payout/ckb-tx-builder.js');
+const { lockOf } = require('./tx-builder.js');
 const { bech32Encode } = require('../stratum/username.js');
 
 const HASH_TYPE_BYTE = Object.freeze({ data: 0, type: 1, data1: 2, data2: 4 });

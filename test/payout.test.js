@@ -9,8 +9,8 @@ const { execSync } = require('node:child_process');
 const path = require('node:path');
 
 const { createDb } = require('../src/accounting/db.js');
-const { createPayoutWorker } = require('../src/payout/payout-worker.js');
-const { createDryRunBuilder } = require('../src/payout/tx-builder.js');
+const { createPayoutWorker } = require('../src/wallet/payout-worker.js');
+const { createDryRunBuilder } = require('../src/wallet/tx-builder-stub.js');
 const { postEntry, balanceFor, ACCOUNTS } = require('../src/accounting/ledger.js');
 
 const { destructiveDbUrl } = require('./tools/test-db.js');
@@ -124,3 +124,50 @@ test('payout: reservation, broadcast, confirmation, no double-pay', { timeout: 6
   assert.strictEqual(paidTotal.s, '500000000000', 'sum of two legitimate payments');
   assert.strictEqual(paidTotal.n, 2, 'no third (duplicate) payment');
 });
+
+test('payout: a HELD batch can be released once with an operator audit trail',
+  { timeout: 60000, skip: !dbReady }, async t => {
+    const db = createDb(DB_URL);
+    t.after(() => db.close());
+    await db.migrate(MIGRATIONS);
+    await db.query('TRUNCATE payout_items, payout_batches CASCADE');
+
+    const id = '01a00000-0000-7000-8000-000000000001';
+    await db.query(
+      `INSERT INTO payout_batches (id, state, held_reason)
+       VALUES ($1, 'HELD', 'per-batch cap exceeded')`,
+      [id],
+    );
+
+    const held = (await db.query(
+      `SELECT state, held_reason, released_by, released_at
+         FROM payout_batches WHERE id = $1`, [id])).rows[0];
+    assert.strictEqual(held.state, 'HELD');
+    assert.match(held.held_reason, /per-batch cap/i);
+    assert.strictEqual(held.released_by, null);
+    assert.strictEqual(held.released_at, null);
+
+    const releasedCount = await db.query(
+      `UPDATE payout_batches
+          SET state = 'RESERVED', released_by = $2, released_at = now()
+        WHERE id = $1 AND state = 'HELD'`,
+      [id, 'operator@console'],
+    );
+    assert.strictEqual(releasedCount.rowCount, 1);
+
+    const secondRelease = await db.query(
+      `UPDATE payout_batches
+          SET state = 'RESERVED', released_by = $2, released_at = now()
+        WHERE id = $1 AND state = 'HELD'`,
+      [id, 'different-operator'],
+    );
+    assert.strictEqual(secondRelease.rowCount, 0,
+      'a release is a one-way audited transition, not a rewritable approval');
+
+    const released = (await db.query(
+      `SELECT state, released_by, released_at
+         FROM payout_batches WHERE id = $1`, [id])).rows[0];
+    assert.strictEqual(released.state, 'RESERVED');
+    assert.strictEqual(released.released_by, 'operator@console');
+    assert.ok(released.released_at);
+  });

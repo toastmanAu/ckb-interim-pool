@@ -1,7 +1,7 @@
 'use strict';
 /**
  * ckb-in-process.js — payout TxBuilder adapter over the self-contained
- * CKB transaction builder (src/payout/ckb-tx-builder.js).
+ * CKB transaction builder (src/wallet/tx-builder.js).
  *
  * The batch path produces ONE signed transaction for the whole payout batch
  * (spec 04 §11). Private keys are read from a file on the payout host only
