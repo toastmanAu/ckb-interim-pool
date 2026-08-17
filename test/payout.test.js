@@ -44,19 +44,40 @@ async function seedConfirmed(db, address, shannons, key = 'seed') {
   return minerId;
 }
 
+async function seedTreasuryIncome(db, amountShannons) {
+  const blockId = (await db.query(
+    `INSERT INTO blocks (edge_id, boot_id, job_id, nonce, height, state)
+     VALUES ('payout-test', gen_random_uuid(), 'income', '0x1', 60000,
+             'CANONICAL_IMMATURE') RETURNING id`,
+  )).rows[0].id;
+  await db.query(
+    `INSERT INTO treasury_receipts
+       (block_id, block_height, payout_block_height, payout_tx_hash,
+        output_index, lock_args, amount_shannons, mature_at_epoch, confirmed_at)
+     VALUES ($1, 60000, 60011, $2, 0, $3, $4, 1, now())`,
+    [blockId, `0x${'31'.repeat(32)}`, `0x${'ab'.repeat(20)}`, String(amountShannons)],
+  );
+}
+
 test('payout: reservation, broadcast, confirmation, no double-pay', { timeout: 60000, skip: !dbReady }, async t => {
   const db = createDb(DB_URL);
   t.after(() => db.close());
   await db.migrate(MIGRATIONS);
-  await db.query('TRUNCATE payout_batches, payout_items, ledger_entries, miners CASCADE');
+  await db.query(
+    'TRUNCATE payout_items, payout_batches, treasury_receipts, ledger_entries, blocks, miners CASCADE');
 
   const aId = await seedConfirmed(db, ADDR_A, 500_000_000_000n);   // 5000 CKB
   const bId = await seedConfirmed(db, ADDR_B, 200_000_000_000n);   // 2000 CKB
+  await seedTreasuryIncome(db, 1_000_000_000_000n);
   const poolAddress = ADDR_A;
   const worker = createPayoutWorker({
     db,
     txBuilder: createDryRunBuilder({ payoutAddress: poolAddress }),
     minimumPayoutShannons: '100000000000',   // 1000 CKB floor
+    limits: {
+      maxBatchShannons: '2000000000000',
+      maxDailyShannons: '4000000000000',
+    },
   });
 
   // ── sweep 1: both eligible ────────────────────────────────────────────────

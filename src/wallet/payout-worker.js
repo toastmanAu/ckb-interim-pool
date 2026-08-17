@@ -14,9 +14,50 @@
 
 const { uuidv7 } = require('../common/ids.js');
 const { postEntry, balanceFor, ACCOUNTS } = require('../accounting/ledger.js');
+const { capVerdict, dailySpentShannons } = require('./caps.js');
 
-function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '100000000000', maxItemsPerBatch = 200, logger = console }) {
+function createPayoutWorker({
+  db,
+  txBuilder,
+  minimumPayoutShannons = '100000000000',
+  maxItemsPerBatch = 200,
+  limits,
+  logger = console,
+}) {
   const minimum = BigInt(minimumPayoutShannons);
+  const stats = { insolvency: 0 };
+
+  if (minimum < 0n) throw new Error('minimumPayoutShannons must be non-negative');
+  if (!Number.isInteger(maxItemsPerBatch) || maxItemsPerBatch < 1) {
+    throw new Error('maxItemsPerBatch must be a positive integer');
+  }
+  if (!limits || typeof limits.maxBatchShannons !== 'string' ||
+      typeof limits.maxDailyShannons !== 'string' ||
+      !/^\d+$/.test(limits.maxBatchShannons) ||
+      !/^\d+$/.test(limits.maxDailyShannons)) {
+    throw new Error('payout limits are required as decimal shannon strings');
+  }
+
+  /** Refuse payout construction when the ledger owes more than reconciled income. */
+  async function solvencyGate(queryable = db) {
+    const { rows } = await queryable.query(
+      `SELECT
+         (SELECT COALESCE(sum(amount_shannons), 0)
+            FROM treasury_receipts
+           WHERE confirmed_at IS NOT NULL AND voided_at IS NULL)::text AS received,
+         (SELECT COALESCE(sum(amount_shannons), 0)
+            FROM ledger_entries
+           WHERE account_type = ANY($1::text[]))::text AS owed`,
+      [[ACCOUNTS.CONFIRMED, ACCOUNTS.PENDING_PAYOUT]],
+    );
+    const received = BigInt(rows[0].received);
+    const owed = BigInt(rows[0].owed);
+    if (owed <= received) return { ok: true, received, owed };
+
+    stats.insolvency++;
+    logger.log('INCIDENT', `INSOLVENCY: ledger owes ${owed} but reconciled income is ${received}; payouts stopped`);
+    return { ok: false, received, owed };
+  }
 
   /** Miners with confirmed balance ≥ floor, by miner id (net of reservations). */
   async function eligibleMiners() {
@@ -24,6 +65,13 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
       `SELECT miner_id, sum(amount_shannons)::text AS balance
        FROM ledger_entries
        WHERE account_type = $1
+         AND NOT EXISTS (
+           SELECT 1
+             FROM payout_items i
+             JOIN payout_batches b ON b.id = i.batch_id
+            WHERE i.miner_id = ledger_entries.miner_id
+              AND b.state = 'HELD'
+         )
        GROUP BY miner_id
        HAVING sum(amount_shannons) >= $2
        ORDER BY miner_id`,
@@ -32,50 +80,165 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
     return res.rows;
   }
 
-  /** Reserve exactly the confirmed balance for each eligible miner. */
+  /**
+   * Construct one exact proposal from current ledger balances. A cap breach
+   * keeps the proposal as HELD items for audit, but posts no reservation.
+   */
   async function createBatch(miners) {
     const batchId = uuidv7();
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
-      await client.query(
-        `INSERT INTO payout_batches (id, state) VALUES ($1, 'CREATED')`,
-        [batchId],
-      );
-      let items = 0;
-      for (const m of miners.slice(0, maxItemsPerBatch)) {
-        const amount = BigInt(m.balance);
-        const r = await client.query(
-          `INSERT INTO payout_items (batch_id, miner_id, amount_shannons) VALUES ($1, $2, $3)
-           ON CONFLICT (batch_id, miner_id) DO NOTHING RETURNING id`,
-          [batchId, m.miner_id, amount.toString()],
-        );
-        if (r.rowCount === 0) continue;
-        await postEntry(client, {
-          accountType: ACCOUNTS.CONFIRMED,
-          minerId: m.miner_id,
-          amountShannons: (-amount).toString(),
-          referenceType: 'payout',
-          referenceId: batchId,
-          idempotencyKey: `payout:reserve:${batchId}:${m.miner_id}:confirmed`,
-        });
-        await postEntry(client, {
-          accountType: ACCOUNTS.PENDING_PAYOUT,
-          minerId: m.miner_id,
-          amountShannons: amount.toString(),
-          referenceType: 'payout',
-          referenceId: batchId,
-          idempotencyKey: `payout:reserve:${batchId}:${m.miner_id}:pending`,
-        });
-        items++;
-      }
-      if (items === 0) {
+      const solvent = await solvencyGate(client);
+      if (!solvent.ok) {
         await client.query('ROLLBACK');
         return null;
       }
-      await client.query(`UPDATE payout_batches SET state = 'RESERVED' WHERE id = $1`, [batchId]);
+
+      const candidates = [];
+      const seen = new Set();
+      for (const m of miners.slice(0, maxItemsPerBatch)) {
+        const minerId = String(m.miner_id);
+        if (seen.has(minerId)) continue;
+        seen.add(minerId);
+        const owed = await balanceFor(client, minerId, [ACCOUNTS.CONFIRMED]);
+        if (owed < minimum) continue;
+        candidates.push({ minerId, amount: owed, owed });
+      }
+      if (candidates.length === 0) {
+        await client.query('ROLLBACK');
+        return null;
+      }
+
+      const batchTotal = candidates.reduce((sum, item) => sum + item.amount, 0n);
+      const dailySpent = await dailySpentShannons(client);
+      const verdict = capVerdict({
+        batchTotal: batchTotal.toString(),
+        dailySpent,
+        perMiner: candidates.map(item => ({
+          minerId: item.minerId,
+          amount: item.amount.toString(),
+          owed: item.owed.toString(),
+        })),
+        limits,
+      });
+      const state = verdict.allowed ? 'RESERVED' : 'HELD';
+
+      await client.query(
+        `INSERT INTO payout_batches (id, state, held_reason) VALUES ($1, $2, $3)`,
+        [batchId, state, verdict.reason],
+      );
+      for (const item of candidates) {
+        await client.query(
+          `INSERT INTO payout_items (batch_id, miner_id, amount_shannons, state)
+           VALUES ($1, $2, $3, $4)`,
+          [batchId, item.minerId, item.amount.toString(), state],
+        );
+        if (state === 'RESERVED') {
+          await reserveItem(client, batchId, item.minerId, item.amount);
+        }
+      }
       await client.query('COMMIT');
-      return { batchId, items };
+      return { batchId, items: candidates.length, state };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async function reserveItem(queryable, batchId, minerId, amount) {
+    await postEntry(queryable, {
+      accountType: ACCOUNTS.CONFIRMED,
+      minerId,
+      amountShannons: (-amount).toString(),
+      referenceType: 'payout',
+      referenceId: batchId,
+      idempotencyKey: `payout:reserve:${batchId}:${minerId}:confirmed`,
+    });
+    await postEntry(queryable, {
+      accountType: ACCOUNTS.PENDING_PAYOUT,
+      minerId,
+      amountShannons: amount.toString(),
+      referenceType: 'payout',
+      referenceId: batchId,
+      idempotencyKey: `payout:reserve:${batchId}:${minerId}:pending`,
+    });
+  }
+
+  /**
+   * Turn an operator-released HELD proposal into real reservations atomically.
+   * The preserved amount is paid exactly; a reduced balance invalidates the
+   * approval and parks the batch again for a fresh audit.
+   */
+  async function reserveReleasedBatch(batchId) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const batch = (await client.query(
+        `SELECT state, released_by, released_at
+           FROM payout_batches WHERE id = $1 FOR UPDATE`,
+        [batchId],
+      )).rows[0];
+      if (!batch || batch.state !== 'RESERVED') {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      const { rows: heldItems } = await client.query(
+        `SELECT miner_id::text, amount_shannons::text
+           FROM payout_items WHERE batch_id = $1 AND state = 'HELD'
+          ORDER BY miner_id`,
+        [batchId],
+      );
+      if (heldItems.length === 0) {
+        await client.query('COMMIT');
+        return true;
+      }
+      if (!batch.released_by || !batch.released_at) {
+        await client.query(
+          `UPDATE payout_batches SET state = 'HELD',
+             held_reason = 'release rejected: missing operator audit fields'
+           WHERE id = $1`,
+          [batchId],
+        );
+        await client.query('COMMIT');
+        logger.log('INCIDENT', `batch ${String(batchId).slice(0, 8)} is RESERVED without release audit fields`);
+        return false;
+      }
+      if (!(await solvencyGate(client)).ok) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+
+      for (const item of heldItems) {
+        const amount = BigInt(item.amount_shannons);
+        const confirmed = await balanceFor(client, item.miner_id, [ACCOUNTS.CONFIRMED]);
+        if (confirmed < amount) {
+          await client.query(
+            `UPDATE payout_batches
+                SET state = 'HELD', released_by = NULL, released_at = NULL,
+                    held_reason = 'release invalidated: confirmed balance fell below held proposal'
+              WHERE id = $1`,
+            [batchId],
+          );
+          await client.query('COMMIT');
+          logger.log('INCIDENT', `batch ${String(batchId).slice(0, 8)} release invalidated by changed balance`);
+          return false;
+        }
+      }
+
+      for (const item of heldItems) {
+        await reserveItem(client, batchId, item.miner_id, BigInt(item.amount_shannons));
+      }
+      await client.query(
+        `UPDATE payout_items SET state = 'RESERVED'
+          WHERE batch_id = $1 AND state = 'HELD'`,
+        [batchId],
+      );
+      await client.query('COMMIT');
+      return true;
     } catch (e) {
       await client.query('ROLLBACK');
       throw e;
@@ -225,22 +388,33 @@ function createPayoutWorker({ db, txBuilder, minimumPayoutShannons = '1000000000
       const stuck = await db.query(`SELECT id FROM payout_batches WHERE state = 'RESERVED'`);
       for (const b of stuck.rows) {
         logger.log('PAYOUT', `resuming stuck batch ${String(b.id).slice(0, 8)}`);
-        await processBatch(b.id);
+        if (await reserveReleasedBatch(b.id)) await processBatch(b.id);
       }
+      const held = await db.query(`SELECT 1 FROM payout_batches WHERE state = 'HELD' LIMIT 1`);
+      if (held.rowCount > 0) return null;
       const miners = await eligibleMiners();
       if (miners.length === 0) return null;
       const batch = await createBatch(miners);
-      if (batch) {
+      if (batch?.state === 'RESERVED') {
         await processBatch(batch.batchId);
-        return batch;
       }
-      return null;
+      return batch;
     } finally {
       await db.query('SELECT pg_advisory_unlock(727_001)');
     }
   }
 
-  return { runOnce, eligibleMiners, createBatch, processBatch, confirmBatch, recoverPendingBatches };
+  return {
+    runOnce,
+    eligibleMiners,
+    createBatch,
+    processBatch,
+    confirmBatch,
+    recoverPendingBatches,
+    reserveReleasedBatch,
+    solvencyGate,
+    stats,
+  };
 }
 
 module.exports = { createPayoutWorker };
