@@ -70,16 +70,26 @@ function spendableSplit({ cells, tipEpoch }) {
  * reconstructed.
  *
  * `total_shannons` (confirmed, un-voided treasury_receipts) and
- * `owed_shannons` (the `ACCOUNTS.CONFIRMED` ledger balance) are real
- * measurements. `spendable_shannons`/`cell_count` require enumerating the
- * treasury lock's cells through an indexer, which this plan does not have —
- * that arrives with the indexer client in a later plan. They are written
- * NULL, not 0: a stored 0 would assert "nothing is spendable", which is a
- * claim this plan cannot make and NULL (not-yet-measured) does not.
+ * `owed_shannons` (the `ACCOUNTS.CONFIRMED` ledger balance) come from durable
+ * accounting data. When indexer measurement inputs are supplied, live cells
+ * provide `spendable_shannons` and `cell_count`; without them those fields are
+ * NULL, never a false zero.
  *
  * @param {{query: Function}} db
+ * @param {object} [measurement]
+ * @param {string} measurement.indexerUrl
+ * @param {string} [measurement.nodeUrl]
+ * @param {Function} measurement.rpc
+ * @param {string} measurement.tipEpochHex
+ * @param {{code_hash:string,hash_type:string,args:string}} measurement.lock
  */
-async function snapshotTreasuryLocks(db) {
+async function snapshotTreasuryLocks(db, measurement = {}) {
+  const { indexerUrl, nodeUrl, rpc, tipEpochHex, lock } = measurement;
+  const supplied = [indexerUrl, rpc, tipEpochHex, lock].filter(value => value != null).length;
+  if (supplied > 0 && supplied < 4) {
+    throw new Error('measured treasury snapshot requires indexerUrl, rpc, tipEpochHex and lock');
+  }
+  const canMeasure = supplied === 4;
   const locks = await db.query(
     `SELECT lock_args, sum(amount_shannons) AS received
        FROM treasury_receipts WHERE voided_at IS NULL AND confirmed_at IS NOT NULL
@@ -88,11 +98,24 @@ async function snapshotTreasuryLocks(db) {
     `SELECT COALESCE(sum(amount_shannons), 0) AS owed FROM ledger_entries
       WHERE account_type = $1`, [ACCOUNTS.CONFIRMED])).rows[0].owed;
   for (const l of locks.rows) {
+    let spendable = null;
+    let cellCount = null;
+    if (canMeasure && l.lock_args === lock.args) {
+      // Lazy to avoid a module cycle at initialization: cells.js consumes
+      // spendableSplit from this module. Only the lock derived from the loaded
+      // key is measured: reporting an old receipt lock as spendable would
+      // claim the current wallet can sign for money it does not control.
+      const { collectLiveCells, treasuryView } = require('./cells.js');
+      const rawCells = await collectLiveCells({ indexerUrl, nodeUrl, lock, rpc });
+      const view = treasuryView({ rawCells, tipEpochHex });
+      spendable = view.spendable;
+      cellCount = view.cellCount;
+    }
     await db.query(
       `INSERT INTO treasury_snapshots
          (lock_args, total_shannons, spendable_shannons, cell_count, owed_shannons)
-       VALUES ($1, $2, NULL, NULL, $3)`,
-      [l.lock_args, l.received, owed]);
+       VALUES ($1, $2, $3, $4, $5)`,
+      [l.lock_args, l.received, spendable, cellCount, owed]);
   }
 }
 

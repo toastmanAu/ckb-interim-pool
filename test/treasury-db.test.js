@@ -33,6 +33,9 @@ async function seedReceipt(db, { lockArgs, amount, confirmed, height }) {
     [blockId, height, '0x' + height.toString(16).padStart(64, '0'), lockArgs, amount]);
 }
 
+const packedEpoch = (number, index = 0, length = 1800) =>
+  '0x' + (BigInt(number) | (BigInt(index) << 24n) | (BigInt(length) << 40n)).toString(16);
+
 test('treasury snapshots', { timeout: 60000, skip: !dbReady }, async t => {
   const db = createDb(DB_URL);
   t.after(() => db.close());
@@ -74,5 +77,58 @@ test('treasury snapshots', { timeout: 60000, skip: !dbReady }, async t => {
     const { rows } = await db.query('SELECT lock_args, total_shannons FROM treasury_snapshots ORDER BY lock_args');
     assert.strictEqual(rows.length, 2);
     assert.deepStrictEqual(rows.map(r => r.lock_args), ['0xaa', '0xbb']);
+  });
+
+  await t.test('writes measured spendable value and cell count when indexer inputs are supplied', async () => {
+    await db.query('TRUNCATE treasury_snapshots, treasury_receipts, blocks, ledger_entries CASCADE');
+    const lockArgs = '0x' + 'aa'.repeat(20);
+    const historicalArgs = '0x' + 'bb'.repeat(20);
+    await seedReceipt(db, { lockArgs, amount: '300', confirmed: true, height: 20 });
+    await seedReceipt(db, { lockArgs: historicalArgs, amount: '400', confirmed: true, height: 21 });
+
+    const lock = {
+      code_hash: '0x' + '11'.repeat(32),
+      hash_type: 'type',
+      args: lockArgs,
+    };
+    let collectedFor = null;
+    const rpc = async (url, method, params) => {
+      if (method === 'get_cells') {
+        collectedFor = params[0].script;
+        return {
+          objects: [
+            {
+              output: { capacity: '0x64' }, block_number: '0x64', tx_index: '0x0',
+              out_point: { tx_hash: '0x' + '01'.repeat(32), index: '0x0' },
+            },
+            {
+              output: { capacity: '0xc8' }, block_number: '0xc8', tx_index: '0x0',
+              out_point: { tx_hash: '0x' + '02'.repeat(32), index: '0x0' },
+            },
+          ],
+          last_cursor: '0x',
+        };
+      }
+      if (method === 'get_header_by_number') {
+        return { epoch: params[0] === '0x64' ? packedEpoch(10) : packedEpoch(15) };
+      }
+      throw new Error(`unexpected RPC method ${method}`);
+    };
+
+    await snapshotTreasuryLocks(db, {
+      indexerUrl: 'http://indexer', rpc, tipEpochHex: packedEpoch(18), lock,
+    });
+
+    const row = (await db.query(
+      'SELECT * FROM treasury_snapshots WHERE lock_args = $1', [lockArgs])).rows[0];
+    assert.deepStrictEqual(collectedFor, lock);
+    assert.strictEqual(row.total_shannons, '300');
+    assert.strictEqual(row.spendable_shannons, '100', 'epoch 10 is mature; epoch 15 is not');
+    assert.strictEqual(row.cell_count, 2);
+    const historical = (await db.query(
+      'SELECT * FROM treasury_snapshots WHERE lock_args = $1', [historicalArgs])).rows[0];
+    assert.strictEqual(historical.spendable_shannons, null,
+      'a lock the loaded key does not control must never be reported as spendable');
+    assert.strictEqual(historical.cell_count, null);
   });
 });
