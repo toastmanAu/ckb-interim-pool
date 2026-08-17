@@ -62,7 +62,9 @@ credentials so they can split later).
    reserve a database payout batch but cannot call the broadcaster.
 7. Before arming, run `poolctl wallet doctor`. Confirm the derived address,
    expected address, node/indexer health, caps, mature spendable balance and
-   cold address. Then create a systemd drop-in deliberately:
+   cold address. If cold sweeps are configured, also run
+   `poolctl wallet sweep --dry-run` and verify the exact destination and
+   protected float. Then create a systemd drop-in deliberately:
 
    ```
    systemctl edit pool-wallet
@@ -141,9 +143,10 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
    recipient and amount, the rolling 24-hour spend, current miner balances and
    `poolctl wallet doctor` output. A release overrides the cap; it is not a
    routine retry button.
-2. Prefer `poolctl wallet approve <batch-id>` when available. Until that
-   command is deployed, use one audited conditional database write, replacing
-   both placeholders explicitly:
+2. Run `POOL_OPERATOR_ID='<operator identity>' poolctl wallet approve <batch-id>`.
+   It conditionally releases only a `HELD` batch and stamps the operator and
+   release time. For emergency recovery on an older deployment, use one
+   audited conditional database write, replacing both placeholders explicitly:
 
    ```sql
    UPDATE payout_batches

@@ -13,10 +13,13 @@
  *   poolctl events replay-status
  *   poolctl wallet status
  *   poolctl wallet receipts [height]
+ *   poolctl wallet doctor
+ *   poolctl wallet approve <batch-id>
+ *   poolctl wallet sweep --dry-run
  *
- * Read-only except `payout dry-run` (builds a document, broadcasts nothing)
- * and `block recheck` (reopens a verdict for re-verification; decides nothing
- * itself — the tracker re-proves the state against the node).
+ * Read-only except `block recheck` (reopens a verdict for re-verification)
+ * and `wallet approve` (releases exactly one HELD payout with an operator
+ * audit stamp). Both dry-run commands build reports and broadcast nothing.
  */
 
 const { createDb } = require('./db.js');
@@ -24,6 +27,16 @@ const { allocateBlock } = require('../pplns/pplns.js');
 const { compactToTargetLE } = require('../mining/ckb-target.js');
 const { targetLEToWorkUnits } = require('../pplns/work-units.js');
 const { balanceFor, verifyBlockConservation, auditableBlocks, ACCOUNTS } = require('./ledger.js');
+const { createRpcClient } = require('../edge/rpc.js');
+const { loadKeystore } = require('../wallet/keystore.js');
+const { collectLiveCells, treasuryView } = require('../wallet/cells.js');
+const { dailySpentShannons } = require('../wallet/caps.js');
+const {
+  sweepAmount,
+  validateColdAddress,
+  checkColdAddressTofu,
+  owedUnpaidShannons,
+} = require('../wallet/sweep.js');
 
 const DB_URL = process.env.POOL_DB_URL || 'postgres://pool:pooltest@127.0.0.1:5433/pooltest';
 
@@ -263,6 +276,227 @@ async function walletStatus(db) {
   };
 }
 
+/** One JSON-RPC request to an explicit private CKB node or indexer URL. */
+async function rpcOnce(url, method, params) {
+  if (!url) throw new Error(`RPC URL is not configured for ${method}`);
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== 'http:') {
+    throw new Error(`unsupported RPC protocol ${endpoint.protocol}`);
+  }
+  return createRpcClient({
+    host: endpoint.hostname,
+    port: parseInt(endpoint.port || '8114', 10),
+  }).rpc(method, params);
+}
+
+function configuredShannons(value, fallback, field) {
+  const selected = value ?? fallback;
+  if (typeof selected !== 'string' || !/^\d+$/.test(selected)) {
+    throw new Error(`${field} must be a non-negative decimal shannon string`);
+  }
+  return selected;
+}
+
+/**
+ * Pre-flight for an operator about to arm the wallet.
+ *
+ * Operational faults are findings rather than exceptions so one run reports
+ * every problem it can safely discover. Private key bytes remain local to
+ * the keystore result and are never copied into the report.
+ */
+async function walletDoctor({
+  db,
+  env,
+  rpc = rpcOnce,
+  loadKeystoreFn = loadKeystore,
+  collectLiveCellsFn = collectLiveCells,
+}) {
+  if (!db || !env) throw new Error('walletDoctor requires db and env');
+  const report = {
+    ok: true,
+    armed: false,
+    key: {},
+    node: {},
+    coldAddress: {},
+    limits: {},
+    treasury: {},
+  };
+  const fail = (section, problem) => {
+    report[section].problem = String(problem);
+    report.ok = false;
+  };
+
+  let keystore = null;
+  if (!env.POOL_WALLET_KEY) {
+    fail('key', 'POOL_WALLET_KEY is not set — the wallet cannot sign payouts');
+  } else {
+    try {
+      keystore = loadKeystoreFn({
+        keyPath: env.POOL_WALLET_KEY,
+        expectedAddress: env.POOL_WALLET_EXPECTED_ADDRESS || null,
+        network: env.POOL_WALLET_NETWORK || 'ckb',
+      });
+      report.key.address = keystore.address;
+      report.key.lockArgs = keystore.lock.args;
+    } catch (error) {
+      fail('key', error.message);
+    }
+  }
+
+  const nodeUrl = env.POOL_NODE_RPC;
+  const indexerUrl = env.POOL_INDEXER_URL;
+  let tip = null;
+  try {
+    if (!nodeUrl) throw new Error('POOL_NODE_RPC is not set');
+    if (!indexerUrl) throw new Error('POOL_INDEXER_URL is not set');
+    tip = await rpc(nodeUrl, 'get_tip_header', []);
+    const indexerTip = await rpc(indexerUrl, 'get_indexer_tip', []);
+    const nodeHeight = Number.parseInt(tip?.number, 16);
+    const indexerHeight = Number.parseInt(indexerTip?.block_number, 16);
+    if (!Number.isSafeInteger(nodeHeight) || !Number.isSafeInteger(indexerHeight)) {
+      throw new Error('node or indexer returned an invalid tip height');
+    }
+    const maxLag = Number.parseInt(env.POOL_WALLET_MAX_INDEXER_LAG || '50', 10);
+    if (!Number.isSafeInteger(maxLag) || maxLag < 0) {
+      throw new Error('POOL_WALLET_MAX_INDEXER_LAG must be a non-negative integer');
+    }
+    report.node.tip = nodeHeight;
+    report.node.indexerTip = indexerHeight;
+    report.node.indexerLag = nodeHeight - indexerHeight;
+    report.node.maxIndexerLag = maxLag;
+    if (report.node.indexerLag > maxLag) {
+      fail('node', `indexer is ${report.node.indexerLag} blocks behind the node; cell selection is stale`);
+    }
+  } catch (error) {
+    fail('node', `node or indexer unreachable or invalid: ${error.message}`);
+  }
+
+  if (!env.POOL_WALLET_COLD_ADDRESS) {
+    report.coldAddress.note = 'not configured — cold sweeps are disabled';
+  } else {
+    try {
+      validateColdAddress(env.POOL_WALLET_COLD_ADDRESS, env.POOL_WALLET_NETWORK || 'ckb');
+      report.coldAddress.address = env.POOL_WALLET_COLD_ADDRESS;
+      const tofu = await checkColdAddressTofu(db, env.POOL_WALLET_COLD_ADDRESS);
+      if (!tofu.ok) fail('coldAddress', tofu.reason);
+      else report.coldAddress.tofuMatch = true;
+    } catch (error) {
+      fail('coldAddress', error.message);
+    }
+  }
+
+  try {
+    const dailySpent = await dailySpentShannons(db);
+    report.limits = {
+      maxBatchShannons: configuredShannons(
+        env.POOL_WALLET_MAX_BATCH_SHANNONS, '200000000000', 'POOL_WALLET_MAX_BATCH_SHANNONS'),
+      maxDailyShannons: configuredShannons(
+        env.POOL_WALLET_MAX_DAILY_SHANNONS, '1000000000000', 'POOL_WALLET_MAX_DAILY_SHANNONS'),
+      floatShannons: configuredShannons(
+        env.POOL_WALLET_FLOAT_SHANNONS, '500000000000', 'POOL_WALLET_FLOAT_SHANNONS'),
+      dailySpent,
+      dailySpentShannons: dailySpent,
+    };
+  } catch (error) {
+    fail('limits', error.message);
+  }
+
+  try {
+    const owed = await owedUnpaidShannons(db, ACCOUNTS);
+    const reconciledIncome = String((await db.query(
+      `SELECT COALESCE(sum(amount_shannons), 0) AS received
+         FROM treasury_receipts
+        WHERE confirmed_at IS NOT NULL AND voided_at IS NULL`,
+    )).rows[0].received);
+    report.treasury.reconciledIncome = reconciledIncome;
+    report.treasury.owedUnpaid = owed;
+    report.treasury.owedUnpaidShannons = owed;
+    if (BigInt(owed) > BigInt(reconciledIncome)) {
+      fail('treasury', `owed ${owed} exceeds reconciled income ${reconciledIncome}`);
+    }
+    if (keystore && tip && !report.node.problem) {
+      if (!tip.epoch) throw new Error('node tip has no epoch for maturity calculation');
+      const rawCells = await collectLiveCellsFn({
+        indexerUrl,
+        nodeUrl,
+        lock: keystore.lock,
+        rpc,
+      });
+      const view = treasuryView({ rawCells, tipEpochHex: tip.epoch });
+      report.treasury.totalShannons = view.total;
+      report.treasury.spendableShannons = view.spendable;
+      report.treasury.cellCount = view.cellCount;
+      if (report.limits.floatShannons) {
+        report.treasury.sweepShannons = sweepAmount({
+          spendable: view.spendable,
+          floatShannons: report.limits.floatShannons,
+          owedUnpaid: owed,
+        });
+      }
+      if (BigInt(view.spendable) < BigInt(owed)) {
+        fail('treasury', `spendable ${view.spendable} is below unpaid miner liabilities ${owed}`);
+      }
+    }
+  } catch (error) {
+    fail('treasury', error.message);
+  }
+
+  report.armed = env.POOL_WALLET_ARMED === '1' && env.POOL_WALLET_DRY_RUN !== '1';
+  if (!report.armed) {
+    report.ok = false;
+    report.note = 'not armed — the wallet can inspect and build, but broadcasts no payout or sweep';
+  }
+  return report;
+}
+
+/** Release exactly one HELD batch and preserve who authorized the movement. */
+async function approveBatch(db, batchId, who) {
+  if (!batchId) throw new Error('a payout batch id is required');
+  if (typeof who !== 'string' || who.trim() === '') throw new Error('operator identity is required');
+  const result = await db.query(
+    `UPDATE payout_batches
+        SET state = 'RESERVED', released_by = $2, released_at = now()
+      WHERE id = $1 AND state = 'HELD'
+      RETURNING id::text`,
+    [batchId, who.trim()],
+  );
+  if (result.rowCount === 0) {
+    throw new Error(`batch ${batchId} is not HELD — nothing to release`);
+  }
+  return { batchId: result.rows[0].id, releasedBy: who.trim() };
+}
+
+/** Compute the sweep from the same live preflight data; never constructs a transaction. */
+async function walletSweepDryRun(options) {
+  const report = await walletDoctor(options);
+  const unsafeFindings = ['key', 'node', 'coldAddress', 'limits', 'treasury']
+    .filter(section => report[section]?.problem)
+    .map(section => `${section}: ${report[section].problem}`);
+  if (unsafeFindings.length > 0) {
+    throw new Error(`cannot preview cold sweep; ${unsafeFindings.join('; ')}`);
+  }
+  const required = [
+    ['cold address', report.coldAddress.address],
+    ['spendable balance', report.treasury.spendableShannons],
+    ['float', report.limits.floatShannons],
+    ['unpaid liabilities', report.treasury.owedUnpaidShannons],
+    ['sweep amount', report.treasury.sweepShannons],
+  ];
+  const missing = required.filter(([, value]) => value == null).map(([name]) => name);
+  if (missing.length > 0) {
+    throw new Error(`cannot preview cold sweep; unavailable: ${missing.join(', ')}`);
+  }
+  return {
+    dryRun: true,
+    broadcastNothing: true,
+    coldAddress: report.coldAddress.address,
+    spendableShannons: report.treasury.spendableShannons,
+    floatShannons: report.limits.floatShannons,
+    owedUnpaidShannons: report.treasury.owedUnpaidShannons,
+    sweepShannons: report.treasury.sweepShannons,
+  };
+}
+
 async function cmdWallet(db, [action, arg]) {
   if (action === 'status') {
     console.log(JSON.stringify(await walletStatus(db), null, 2));
@@ -278,7 +512,20 @@ async function cmdWallet(db, [action, arg]) {
     console.log(JSON.stringify(rows, null, 2));
     return;
   }
-  console.error('usage: poolctl wallet <status|receipts [height]>');
+  if (action === 'doctor') {
+    console.log(JSON.stringify(await walletDoctor({ db, env: process.env }), null, 2));
+    return;
+  }
+  if (action === 'approve') {
+    const who = process.env.POOL_OPERATOR_ID || process.env.USER;
+    console.log(JSON.stringify(await approveBatch(db, arg, who), null, 2));
+    return;
+  }
+  if (action === 'sweep' && arg === '--dry-run') {
+    console.log(JSON.stringify(await walletSweepDryRun({ db, env: process.env }), null, 2));
+    return;
+  }
+  console.error('usage: poolctl wallet <status|receipts [height]|doctor|approve <batch-id>|sweep --dry-run>');
   process.exit(2);
 }
 
@@ -288,4 +535,10 @@ if (require.main === module) {
   main().catch(e => { console.error('poolctl error:', e.message); process.exit(1); });
 }
 
-module.exports = { walletStatus };
+module.exports = {
+  walletStatus,
+  walletDoctor,
+  approveBatch,
+  walletSweepDryRun,
+  rpcOnce,
+};

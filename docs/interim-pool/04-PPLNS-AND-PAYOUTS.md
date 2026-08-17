@@ -208,4 +208,7 @@ poolctl ledger verify
 poolctl payout dry-run
 poolctl payout inspect <batch-id>
 poolctl events replay-status
+poolctl wallet doctor
+poolctl wallet approve <batch-id>
+poolctl wallet sweep --dry-run
 ```
