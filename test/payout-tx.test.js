@@ -57,7 +57,7 @@ test('dev chain: signed payout tx accepted by the node', { timeout: 60000, skip:
     r = await buildAndSendPayout({
       rpcUrl: DEV_RPC,
       privateKey: Buffer.from(KEY.priv, 'hex'),
-      toAddresses: [{ address: KEY.address, capacityShannons: null }],
+      toAddresses: [{ address: KEY.address, capacityShannons: '10000000000' }],
       feeRateShannons: 1000,
     });
   } catch (e) {
@@ -74,4 +74,12 @@ test('dev chain: signed payout tx accepted by the node', { timeout: 60000, skip:
   assert.match(r.txHash, /^0x[0-9a-f]{64}$/);
   assert.ok(r.inputs > 0 || r.txHash, 'spends pool cells (or already accepted)');
   assert.ok(r.outputs.length >= 1 || r.txHash);
+  if (r.outputs.length > 0) {
+    assert.strictEqual(r.outputs.length, 2,
+      'fixed payout must include a treasury change output');
+    assert.ok(r.outputs.some(output => BigInt(output.capacity) === 10_000_000_000n),
+      'recipient receives the full fixed amount');
+    assert.ok(BigInt(r.feeShannons) < 100_000_000n,
+      'input excess must not be burned as an unbounded fee');
+  }
 });

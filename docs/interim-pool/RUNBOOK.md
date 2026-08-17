@@ -28,8 +28,18 @@ credentials so they can split later).
    useradd --system --no-create-home --shell /usr/sbin/nologin pool-wallet
    ```
 
-   It needs read access to the repo at `/opt/wyltek-pool` and nothing else:
-   no keys, no write path to the payout host.
+   Provision the externally generated key so only this service identity can
+   read it. Never paste the key into a shell command or store it in the repo:
+
+   ```
+   install -d -o root -g pool-wallet -m 0750 /etc/wyltek-pool
+   install -o pool-wallet -g pool-wallet -m 0600 /secure/offline/payout.privkey \
+     /etc/wyltek-pool/payout.privkey
+   stat -c '%U %G %a %n' /etc/wyltek-pool/payout.privkey
+   ```
+
+   The final line must report `pool-wallet pool-wallet 600`. The `pool` user
+   that runs the NATS-facing accounting service must not be able to read it.
 1. PostgreSQL → `deploy/pg-test.sh` (dev) or the prod instance; migrations
    run automatically by the ingest unit.
 2. NATS (TLS) → `deploy/nats-server.conf` with certs from
@@ -39,7 +49,8 @@ credentials so they can split later).
 4. Edges: `systemctl start pool-edge@<region>` — first edge creates the
    `POOL_V1` stream.
 5. API: `systemctl start pool-api`.
-6. Wallet: `systemctl start pool-wallet` — treasury reconciliation.
+6. Wallet: `systemctl start pool-wallet` — treasury reconciliation and capped
+   payout batching. The shipped unit has `POOL_WALLET_ARMED=0`.
    **Allocation depends on this service.** A CKB cellbase pays the miner of
    N−11, so the pool's income is only known once the reconciler has matched
    block H's cellbase witness against the payout in H+11 and written a
@@ -47,13 +58,26 @@ credentials so they can split later).
    that row and from nothing else. With `pool-wallet` down, found blocks sit
    in `MATURE` and no miner is ever credited — silently, unless the
    `WalletReconcilerStalled` / `WalletDown` alerts are wired up
-   (`deploy/prometheus/`). It holds no signing key and cannot move funds.
-7. Payout: `systemctl enable --now pool-payout.timer` (hourly; dry-run mode
-   until the testnet drill passes).
+   (`deploy/prometheus/`). With a key loaded but the unit unarmed, it may
+   reserve a database payout batch but cannot call the broadcaster.
+7. Before arming, run `poolctl wallet doctor`. Confirm the derived address,
+   expected address, node/indexer health, caps, mature spendable balance and
+   cold address. Then create a systemd drop-in deliberately:
+
+   ```
+   systemctl edit pool-wallet
+   # [Service]
+   # Environment=POOL_WALLET_ARMED=1
+   systemctl daemon-reload
+   systemctl restart pool-wallet
+   ```
+
+   Re-run `poolctl wallet doctor` after any key, address, node, indexer, cap or
+   cold-address change before restoring `POOL_WALLET_ARMED=1`.
 
 Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
 (api), `curl localhost:8082/health` (edge), `curl localhost:9102/health`
-(wallet — `signing:false` is expected and required).
+(wallet — before arming, expect `signing:true` and `armed:false`).
 
 ## 3. Daily checks
 
@@ -64,10 +88,10 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
   a non-zero `blocks_with_voided_receipts` that does not clear means a
   payout was withdrawn by a reorg and no replacement has been found — check
   that block's H+11 cellbase against our lock.
-  `lifetime_income_covers_current_liabilities` is NOT a solvency check: it
-  compares lifetime confirmed income against current liabilities, so it
-  cannot fall once payouts have run. The on-chain balance check arrives with
-  the indexer client (Plan 2).
+  The wallet refuses every new payout when current confirmed/pending ledger
+  liabilities exceed confirmed reconciled income. Treat any increment of
+  `pool_wallet_insolvency_total` as an incident; do not release batches until
+  the accounting discrepancy is understood.
 - `deploy/check-stale.sh` — every service on the deployed commit (covers
   ingest :9101 and wallet :9102).
 - `poolctl events replay-status` — per-edge ingestion counts.
@@ -106,6 +130,31 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
    re-sends a broadcast amount.
 4. Escalate manually only with an `adjustment` ledger entry + reason.
 
+### Release a HELD payout batch
+
+1. Keep the wallet unarmed while reviewing. Inspect the batch reason, every
+   recipient and amount, the rolling 24-hour spend, current miner balances and
+   `poolctl wallet doctor` output. A release overrides the cap; it is not a
+   routine retry button.
+2. Prefer `poolctl wallet approve <batch-id>` when available. Until that
+   command is deployed, use one audited conditional database write, replacing
+   both placeholders explicitly:
+
+   ```sql
+   UPDATE payout_batches
+      SET state = 'RESERVED',
+          released_by = '<operator identity>',
+          released_at = now()
+    WHERE id = '<batch uuid>' AND state = 'HELD'
+   RETURNING id, state, held_reason, released_by, released_at;
+   ```
+
+   Exactly one row must be returned. Never edit `payout_items`: they preserve
+   the exact proposal the operator reviewed. The wallet atomically reserves
+   those items on its next tick; if balances changed, it returns the batch to
+   HELD and requires a fresh approval.
+3. Re-arm only after the returned audit row and wallet metrics are correct.
+
 ### Allocation stopped (blocks stuck MATURE)
 1. `poolctl wallet status` — is `blocks_awaiting_reconciliation` growing?
 2. `systemctl status pool-wallet`; `curl localhost:9102/metrics | grep ticks`.
@@ -128,7 +177,7 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
 ## 5. Backup / restore drill (monthly)
 
 1. `deploy/backup.sh` → dump file.
-2. Stop ingest/API/payout units.
+2. Stop ingest/API/wallet units.
 3. `deploy/restore.sh <dump>` (confirm with RESTORE).
 4. Start units; ingest replays the stream to catch up.
 5. `poolctl ledger verify`; compare `poolctl events replay-status` to
@@ -150,7 +199,7 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
 | NATS CA + edge client certs | edge hosts `/etc/wyltek-pool/nats-tls/` | CI, repo |
 | NATS server key + CA key | central NATS host | edges, repo |
 | DB password | central host env | edges, repo, dashboard JS |
-| Payout key | payout host only (`POOL_PAYOUT_KEY`) | edges, api, CI |
+| Payout key | wallet host only (`POOL_WALLET_KEY`, mode `0600`, owner `pool-wallet`) | edges, api, accounting user, CI |
 | CKB RPC | private network only | public internet |
 
 ## 8. Public endpoints without exposing the home IP

@@ -4,22 +4,31 @@
  * CKB transaction builder (src/wallet/tx-builder.js).
  *
  * The batch path produces ONE signed transaction for the whole payout batch
- * (spec 04 §11). Private keys are read from a file on the payout host only
- * and never logged.
+ * (spec 04 §11). The service supplies validated key bytes from keystore.js;
+ * a key-path argument remains for the standalone dev-chain drill. Keys are
+ * never logged.
  */
 
 const fs = require('node:fs');
-const { buildAndSendBatchPayout } = require('./ckb-tx-builder.js');
+const { buildAndSendBatchPayout } = require('./tx-builder.js');
 
-function createCkbInProcessBuilder({ rpcUrl, indexerUrl = null, privateKeyPath, feeRateShannons = 1000, logger = console }) {
-  const privateKey = Buffer.from(fs.readFileSync(privateKeyPath, 'utf8').trim().replace(/^0x/, ''), 'hex');
+function createCkbInProcessBuilder({
+  rpcUrl,
+  indexerUrl = null,
+  privateKey = null,
+  privateKeyPath = null,
+  feeRateShannons = 1000,
+  logger = console,
+}) {
+  const signingKey = privateKey || Buffer.from(
+    fs.readFileSync(privateKeyPath, 'utf8').trim().replace(/^0x/, ''), 'hex');
 
   return {
     async buildBatchTransfer({ items }) {
       const { txHash } = await buildAndSendBatchPayout({
         rpcUrl,
         indexerUrl,
-        privateKey,
+        privateKey: signingKey,
         feeRateShannons,
         items,
       });

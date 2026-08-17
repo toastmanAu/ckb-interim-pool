@@ -80,8 +80,5 @@ const { Pool } = require('pg');
 })();
 "
 
-echo "3) real payout batch — worker + in-process CKB builder (one signed tx)…"
-node -e 'require("fs").writeFileSync("/tmp/opencode/pool-key.hex", require("/tmp/opencode/pool-key.json").priv + "\n")'
-POOL_DB_URL="$POOL_DB_URL" POOL_PAYOUT_BUILDER=ckb POOL_PAYOUT_KEY=/tmp/opencode/pool-key.hex \
-  POOL_NODE_RPC="$DEV_RPC" POOL_MIN_PAYOUT_SHANNONS=100000000000 \
-  node src/payout/main.js 2>&1 | tail -3
+echo "3) real signed payout transaction — mature cell selection + node acceptance…"
+DEV_RPC="$DEV_RPC" node --test test/payout-tx.test.js

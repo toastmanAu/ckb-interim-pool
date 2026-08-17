@@ -23,6 +23,13 @@ const http = require('node:http');
 const { ckbBlake2b } = require('../mining/blake2b.js');
 const { secp256k1 } = require('@noble/curves/secp256k1.js');
 const { transaction, rawTransaction, molBytes, script, offsetContainer } = require('../mining/ckb-merkle.js');
+const {
+  parseEpochFields,
+  classifyCells,
+  selectOldestFirst,
+  collectLiveCells,
+} = require('./cells.js');
+const { spendableSplit } = require('./treasury.js');
 
 /**
  * WitnessArgs { lock: Option<Bytes>, input_type: Option<Bytes>, output_type: Option<Bytes> }
@@ -69,6 +76,7 @@ function lockOf(pubkeyCompressedHex) {
 
 const SIGHASH_ALL_TYPE_HASH = '0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8';
 const SECP_DATA_HASH = '0x9799bee251b975b82c45a02154ce28cec89c5853ecc14d12b7b8cccfc19e0af4';
+const MIN_SIGHASH_CELL_SHANNONS = 6_100_000_000n;
 
 /**
  * Resolve the secp256k1_blake160_sighash_all cell deps from the genesis.
@@ -117,25 +125,47 @@ async function resolveSecpDeps(nodeUrl) {
  * Primary (production): the ckb-indexer `get_cells` RPC when
  * `indexerUrl` is provided — O(1) per query, paginated, live cells only.
  *
- * Fallback (dev chains / no indexer): scan the pool's own cellbases
- * backward from the tip in chunks until `minCapacity` is covered (correct
+ * Fallback (dev chains / no indexer): scan the pool's own cellbases backward
+ * from the tip, then apply the same maturity and oldest-first rules (correct
  * for a pool that assembles all its blocks; O(history) per payout).
  */
-async function collectPoolCells({ nodeUrl, indexerUrl = null, lock, minCapacity = 0n, maxScanBlocks = 5000 }) {
+async function collectPoolCells({
+  nodeUrl,
+  indexerUrl = null,
+  lock,
+  minCapacity = 0n,
+  maxScanBlocks = 5000,
+  rpcClient = rpc,
+}) {
   if (indexerUrl) {
-    return collectCellsFromIndexer(indexerUrl, lock);
+    const tip = await rpcClient(nodeUrl, 'get_tip_header', []);
+    if (!tip?.epoch) throw new Error('node returned no tip epoch');
+    const rawCells = await collectLiveCells({ indexerUrl, nodeUrl, lock, rpc: rpcClient });
+    const { selected } = selectMaturePoolCells({
+      rawCells,
+      tipEpochHex: tip.epoch,
+      targetShannons: minCapacity.toString(),
+    });
+    return selected.map(cell => ({
+      tx_hash: cell.outPoint.tx_hash,
+      index: cell.outPoint.index,
+      capacity: BigInt(cell.capacity),
+      data: '0x',
+    }));
   }
-  const cells = [];
+  const rawCells = [];
   const spent = new Set();   // "tx_hash:index" of inputs spent by committed txs
-  let covered = 0n;
-  const tip = await rpc(nodeUrl, 'get_tip_header', []);
+  const tip = await rpcClient(nodeUrl, 'get_tip_header', []);
+  if (!tip?.epoch) throw new Error('node returned no tip epoch');
   let height = parseInt(tip.number, 16);
   const CHUNK = 100;
-  while (height > 0 && cells.length < 500 && height > Math.max(0, parseInt(tip.number, 16) - maxScanBlocks)) {
+  while (height > 0 && rawCells.length < 500 &&
+         height > Math.max(0, parseInt(tip.number, 16) - maxScanBlocks)) {
     const from = Math.max(0, height - CHUNK);
     const promises = [];
     for (let h = height; h > from; h--) {
-      promises.push(rpc(nodeUrl, 'get_block_by_number', ['0x' + h.toString(16)]).then(b => ({ h, b })).catch(() => null));
+      promises.push(rpcClient(nodeUrl, 'get_block_by_number', ['0x' + h.toString(16)])
+        .then(b => ({ h, b })).catch(() => null));
     }
     const blocks = await Promise.all(promises);
     for (const { b } of blocks.filter(Boolean).sort((x, y) => y.h - x.h)) {
@@ -150,54 +180,83 @@ async function collectPoolCells({ nodeUrl, indexerUrl = null, lock, minCapacity 
         const out = cb.outputs[i];
         if (out.lock && out.lock.code_hash === lock.code_hash && out.lock.args === lock.args) {
           if (spent.has(`${cb.hash}:0x${i.toString(16)}`)) continue;   // already spent
-          cells.push({
-            tx_hash: cb.hash,
-            index: '0x' + i.toString(16),
-            capacity: BigInt(out.capacity),
-            data: cb.outputs_data[i] || '0x',
+          rawCells.push({
+            output: { capacity: out.capacity },
+            block_number: b.header.number,
+            block_epoch: b.header.epoch,
+            tx_index: '0x0',
+            out_point: { tx_hash: cb.hash, index: '0x' + i.toString(16) },
           });
-          covered += BigInt(out.capacity);
         }
       }
     }
     height = from;
-    if (covered >= minCapacity) break;
   }
-  return cells;
+  const { selected } = selectMaturePoolCells({
+    rawCells,
+    tipEpochHex: tip.epoch,
+    targetShannons: minCapacity.toString(),
+  });
+  return selected.map(cell => ({
+    tx_hash: cell.outPoint.tx_hash,
+    index: cell.outPoint.index,
+    capacity: BigInt(cell.capacity),
+    data: '0x',
+  }));
 }
 
-/** ckb-indexer get_cells (paginated by the `after` cursor). */
-async function collectCellsFromIndexer(indexerUrl, lock) {
-  const cells = [];
-  let after = null;
-  for (let page = 0; page < 200; page++) {
-    const params = {
-      script: { code_hash: lock.code_hash, hash_type: lock.hash_type, args: lock.args },
-      script_type: 'lock',
-      filter: null,
-      with_data: false,
-      order: 'desc',
-      limit: '0x64',
-    };
-    if (after) params.after = after;
-    const res = await rpc(indexerUrl, 'get_cells', [params]);
-    for (const c of res.objects || []) {
-      cells.push({
-        tx_hash: c.out_point.tx_hash,
-        index: c.out_point.index,
-        capacity: BigInt(c.output.capacity),
-        data: '0x',
-      });
-    }
-    if (!res.last_cursor || (res.objects || []).length === 0) break;
-    after = res.last_cursor;
+/** Filter by full fractional epoch maturity, then cover the target oldest-first. */
+function selectMaturePoolCells({ rawCells, tipEpochHex, targetShannons }) {
+  const tipEpoch = parseEpochFields(tipEpochHex);
+  const classified = classifyCells(rawCells);
+  const mature = classified.filter(cell => {
+    if (!cell.isCellbase) return true;
+    return BigInt(spendableSplit({ cells: [cell], tipEpoch }).spendable) > 0n;
+  });
+  const result = selectOldestFirst(mature, targetShannons);
+  if (BigInt(result.total) < BigInt(targetShannons)) {
+    throw new Error(
+      `mature cells cannot cover ${targetShannons} shannons (available ${result.total})`);
   }
-  return cells;
+  return result;
 }
 
 function estimateSize(numInputs, numOutputs) {
   // molecule: 4 header + 4*7 offsets + inputs fixvec + outputs dynvec + data
   return 4 + 28 + numInputs * 44 + numOutputs * 85 + 8 + numOutputs * 4 + 4 + 65 + 4 + 4;
+}
+
+/** Preserve fixed-payout excess as change; only sub-cell dust becomes fee. */
+function planPayoutAmounts({
+  totalIn,
+  fixedAmounts,
+  estimatedFee,
+  sweep,
+  minChangeShannons = MIN_SIGHASH_CELL_SHANNONS,
+}) {
+  const input = BigInt(totalIn);
+  const fee = BigInt(estimatedFee);
+  const minimum = BigInt(minChangeShannons);
+  const fixedSum = fixedAmounts.reduce((sum, amount) => sum + BigInt(amount), 0n);
+  const remainder = input - fixedSum - fee;
+  if (remainder < 0n) {
+    throw new Error(`insufficient funds: in=${input} out=${fixedSum} fee=${fee}`);
+  }
+  if (sweep) {
+    if (remainder < minimum) {
+      throw new Error(`sweep output ${remainder} is below minimum cell capacity ${minimum}`);
+    }
+    return { fixedSum, sweepAmount: remainder, changeAmount: 0n, actualFee: fee };
+  }
+  if (remainder >= minimum) {
+    return { fixedSum, sweepAmount: null, changeAmount: remainder, actualFee: fee };
+  }
+  return {
+    fixedSum,
+    sweepAmount: null,
+    changeAmount: 0n,
+    actualFee: fee + remainder,
+  };
 }
 
 /**
@@ -206,8 +265,8 @@ function estimateSize(numInputs, numOutputs) {
  * @param {string} p.rpcUrl
  * @param {Buffer} p.privateKey
  * @param {Array<{address:string, capacityShannons:string|null}>} p.toAddresses
- *   capacityShannons null → sweep (remainder minus fee goes to change back
- *   to the pool; only one null recipient allowed)
+ *   capacityShannons null → sweep (remainder minus fee goes to that target;
+ *   only one null recipient allowed)
  * @param {number} p.feeRateShannons   fee per byte (dev chain: 1000)
  * @returns {Promise<{txHash:string, inputs:number, outputs:Array, feeShannons:string}>}
  */
@@ -222,7 +281,11 @@ async function buildAndSendPayout({ rpcUrl, privateKey, toAddresses, feeRateShan
     .reduce((a, t) => a + BigInt(t.capacityShannons), 0n);
   // collect enough cells to cover the fixed outputs + fee (fee ≈ size × rate)
   const estFee = BigInt(estimateSize(200, toAddresses.length + 1)) * BigInt(feeRateShannons);
-  const minCapacity = fixedSum + estFee;
+  // Every transaction needs one additional standard-lock output: treasury
+  // change for a fixed payout, or the sweep destination. Selecting enough
+  // for its occupied capacity avoids turning a near-threshold remainder into
+  // a large dust fee when more mature inputs are available.
+  const minCapacity = fixedSum + estFee + MIN_SIGHASH_CELL_SHANNONS;
   const cells = await collectPoolCells({ nodeUrl: rpcUrl, indexerUrl, lock, minCapacity });
   if (cells.length === 0) throw new Error('no pool cells found to spend');
 
@@ -247,23 +310,33 @@ async function buildAndSendPayout({ rpcUrl, privateKey, toAddresses, feeRateShan
   const sweepIdx = targets.findIndex(t => t.capacityShannons === null);
   const sweepTarget = sweepIdx >= 0 ? targets[sweepIdx] : null;
 
-  // fee + change: one iteration (change only when sweeping)
-  const numOuts = fixedOuts.length + (sweepTarget ? 2 : 1);   // +change back to pool
+  // One extra output is either treasury change or the sweep destination.
+  const numOuts = fixedOuts.length + 1;
   const size = estimateSize(cells.length, numOuts);
   const fee = BigInt(size) * BigInt(feeRateShannons);
-  const fixedSum2 = fixedOuts.reduce((a, t) => a + t.capacityShannons, 0n);
-  const sweepAmount = sweepTarget ? (totalIn - fixedSum2 - fee) : 0n;
-  if (sweepAmount < 0n) throw new Error(`insufficient funds: in=${totalIn} out=${fixedSum2} fee=${fee}`);
+  const amounts = planPayoutAmounts({
+    totalIn,
+    fixedAmounts: fixedOuts.map(target => target.capacityShannons),
+    estimatedFee: fee,
+    sweep: Boolean(sweepTarget),
+  });
 
   const outputs = [...fixedOuts.map(t => ({ capacity: '0x' + t.capacityShannons.toString(16), lock: t.lock, type: null }))];
   const outputsData = fixedOuts.map(() => '0x');
   if (sweepTarget) {
-    outputs.push({ capacity: '0x' + sweepAmount.toString(16), lock: sweepTarget.lock, type: null });
+    outputs.push({
+      capacity: '0x' + amounts.sweepAmount.toString(16),
+      lock: sweepTarget.lock,
+      type: null,
+    });
     outputsData.push('0x');
-    if (totalIn - fixedSum2 - sweepAmount - fee > 0n) {
-      outputs.push({ capacity: '0x' + (totalIn - fixedSum2 - sweepAmount - fee).toString(16), lock, type: null });
-      outputsData.push('0x');
-    }
+  } else if (amounts.changeAmount > 0n) {
+    outputs.push({
+      capacity: '0x' + amounts.changeAmount.toString(16),
+      lock,
+      type: null,
+    });
+    outputsData.push('0x');
   }
 
   // digest: RFC 0022 sighash_all message —
@@ -320,14 +393,14 @@ async function buildAndSendPayout({ rpcUrl, privateKey, toAddresses, feeRateShan
     txHash: sentHash,
     inputs: cells.length,
     outputs: outputs.map(o => ({ capacity: o.capacity.toString(), lock: o.lock })),
-    feeShannons: fee.toString(),
+    feeShannons: amounts.actualFee.toString(),
   };
 }
 
 /**
  * One signed transaction for a whole payout batch (spec 04 §11 batching):
  * every item is a fixed-capacity output; inputs = the pool's cells; the
- * remainder after outputs + estimated fee stays implicit (fee = residual).
+ * input excess after outputs and the bounded fee returns to the treasury lock.
  */
 async function buildAndSendBatchPayout({ rpcUrl, privateKey, items, feeRateShannons = 1000, indexerUrl = null }) {
   return buildAndSendPayout({
@@ -339,4 +412,12 @@ async function buildAndSendBatchPayout({ rpcUrl, privateKey, items, feeRateShann
   });
 }
 
-module.exports = { buildAndSendPayout, buildAndSendBatchPayout, collectPoolCells, collectCellsFromIndexer, lockOf, estimateSize };
+module.exports = {
+  buildAndSendPayout,
+  buildAndSendBatchPayout,
+  collectPoolCells,
+  selectMaturePoolCells,
+  planPayoutAmounts,
+  lockOf,
+  estimateSize,
+};

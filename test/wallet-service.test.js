@@ -29,6 +29,31 @@ test('receipt metrics are typed as gauges, not counters', () => {
     'a _total suffix would assert a monotonic counter, which these are not');
 });
 
+test('payout and insolvency failures have distinct metrics', () => {
+  const out = buildMetrics({ payout_errors: 2, insolvency: 3 });
+  assert.match(out, /pool_wallet_payout_errors_total 2/);
+  assert.match(out, /pool_wallet_insolvency_total 3/);
+});
+
+test('wallet unit is unarmed by default and retains key-host hardening', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const unit = fs.readFileSync(
+    path.join(__dirname, '..', 'deploy', 'systemd', 'pool-wallet.service'), 'utf8');
+  for (const line of [
+    'User=pool-wallet',
+    'Environment=POOL_WALLET_ARMED=0',
+    'ProtectSystem=strict',
+    'ProtectHome=true',
+    'PrivateTmp=true',
+    'NoNewPrivileges=true',
+    'MemoryDenyWriteExecute=yes',
+    'LimitCORE=0',
+  ]) {
+    assert.ok(unit.includes(line), `wallet unit must contain ${line}`);
+  }
+});
+
 test('only designated wallet modules may reference key or signing material', () => {
   // Task 4 moves the existing payout builders into the wallet boundary. Keep
   // an exact allowlist so a new signing-capable module requires review.
@@ -38,6 +63,7 @@ test('only designated wallet modules may reference key or signing material', () 
   const files = fs.readdirSync(dir).filter(f => f.endsWith('.js'));
   const maySign = new Set([
     'keystore.js',
+    'main.js',
     'tx-builder.js',
     'tx-builder-inprocess.js',
     'tx-builder-stub.js',
