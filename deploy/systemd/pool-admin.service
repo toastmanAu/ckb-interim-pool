@@ -12,6 +12,8 @@ Environment=POOL_DB_URL=postgres://pool:CHANGEME@127.0.0.1:5432/pooltest
 Environment=POOL_ADMIN_PORT=8085
 # generate with: openssl rand -hex 32  (keep in the operator secret manager)
 Environment=POOL_ADMIN_TOKEN=CHANGEME
+# stable identity written to payout_batches.released_by on a HELD release
+Environment=POOL_ADMIN_OPERATOR=CHANGEME
 ExecStart=/usr/bin/node src/api/admin-main.js
 Restart=always
 RestartSec=3

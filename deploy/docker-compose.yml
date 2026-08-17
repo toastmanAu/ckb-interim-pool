@@ -48,6 +48,7 @@ services:
     environment:
       POOL_DB_URL: postgres://pool:${POOL_DB_PASSWORD}@postgres:5432/pooltest
       POOL_ADMIN_TOKEN: ${POOL_ADMIN_TOKEN:?set POOL_ADMIN_TOKEN}
+      POOL_ADMIN_OPERATOR: ${POOL_ADMIN_OPERATOR:?set POOL_ADMIN_OPERATOR}
     ports: ["127.0.0.1:8085:8085"]
     depends_on:
       postgres: { condition: service_healthy }

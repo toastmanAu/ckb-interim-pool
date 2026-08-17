@@ -5,81 +5,251 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CKB Interim Pool — Operator</title>
 <style>
-  :root { --bg:#0d1117; --card:#161b22; --fg:#e6edf3; --dim:#8b949e; --accent:#3fb950; --warn:#d29922; --danger:#f85149; }
+  :root {
+    color-scheme: dark;
+    --bg: hsl(216, 28%, 7%);
+    --surface: hsl(215, 24%, 11%);
+    --surface-raised: hsl(215, 21%, 15%);
+    --line: hsl(215, 17%, 24%);
+    --fg: hsl(210, 29%, 93%);
+    --dim: hsl(215, 13%, 64%);
+    --accent: hsl(137, 55%, 47%);
+    --accent-dark: hsl(137, 55%, 35%);
+    --warn: hsl(40, 78%, 54%);
+    --warn-dark: hsl(40, 72%, 36%);
+    --danger: hsl(3, 88%, 65%);
+    --radius: 8px;
+  }
   * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 system-ui, sans-serif; }
-  header { padding:14px 20px; border-bottom:1px solid #21262d; display:flex; justify-content:space-between; align-items:center; }
-  header h1 { font-size:16px; margin:0; }
-  main { max-width:1100px; margin:0 auto; padding:20px; }
-  h2 { font-size:14px; color:var(--dim); margin:18px 0 8px; }
-  table { width:100%; border-collapse:collapse; }
-  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #21262d; font-size:12px; font-family:ui-monospace,monospace; }
-  th { color:var(--dim); font-weight:500; }
-  input { background:#0d1117; color:var(--fg); border:1px solid #30363d; border-radius:6px; padding:6px 8px; font-family:ui-monospace,monospace; }
-  button { background:#21262d; color:var(--fg); border:1px solid #30363d; border-radius:6px; padding:6px 10px; cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  .ok { color:var(--accent); } .bad { color:var(--danger); } .muted { color:var(--dim); }
-  pre { background:#161b22; border:1px solid #21262d; border-radius:6px; padding:10px; overflow:auto; max-height:320px; font-size:12px; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 16px 32px;
+    background: var(--surface);
+    box-shadow: 0 1px 3px hsla(215, 30%, 3%, 0.36), 0 1px 2px hsla(215, 30%, 3%, 0.28);
+  }
+  header h1 { margin: 0; font-size: 20px; line-height: 1.25; font-weight: 600; }
+  header p { margin: 4px 0 0; color: var(--dim); font-size: 12px; line-height: 1.6; }
+  .scope { color: var(--dim); font-size: 14px; }
+  main { display: grid; gap: 48px; max-width: 1152px; margin: 0 auto; padding: 48px 32px 96px; }
+  section { display: grid; gap: 16px; }
+  .section-head { display: flex; align-items: end; justify-content: space-between; gap: 16px; }
+  h2 { margin: 0; font-size: 24px; line-height: 1.25; font-weight: 600; }
+  h3 { margin: 0; font-size: 16px; line-height: 1.3; font-weight: 600; }
+  .section-copy { margin: 4px 0 0; max-width: 65ch; color: var(--dim); font-size: 14px; line-height: 1.65; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .stat { min-width: 0; padding: 24px; border-radius: var(--radius); background: var(--surface); box-shadow: 0 1px 2px hsla(215, 30%, 3%, 0.36); }
+  .stat span { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; letter-spacing: .06em; text-transform: uppercase; }
+  .stat strong { display: block; margin-top: 4px; overflow: hidden; font: 600 20px/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; text-overflow: ellipsis; }
+  .panel { overflow: hidden; border-radius: var(--radius); background: var(--surface); box-shadow: 0 1px 3px hsla(215, 30%, 3%, 0.36), 0 1px 2px hsla(215, 30%, 3%, 0.28); }
+  .panel-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 24px; background: var(--surface-raised); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 12px 16px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: middle; font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+  th { color: var(--dim); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; }
+  .field { display: grid; gap: 4px; width: min(100%, 512px); }
+  .field.medium { width: min(100%, 384px); }
+  label { color: var(--dim); font-size: 14px; font-weight: 500; }
+  input {
+    width: 100%; min-height: 44px; padding: 8px 12px;
+    border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--bg); color: var(--fg); font: 14px/1.4 ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  button {
+    min-height: 44px; padding: 8px 16px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface-raised); color: var(--fg); font: inherit; font-size: 14px; font-weight: 600; line-height: 1.3; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); background: hsl(215, 21%, 18%); }
+  button:active { transform: scale(.98); }
+  button:disabled { opacity: .4; cursor: not-allowed; pointer-events: none; }
+  button.caution { border-color: var(--warn-dark); background: hsl(40, 42%, 18%); color: hsl(40, 85%, 78%); }
+  button.caution:hover { border-color: var(--warn); background: hsl(40, 42%, 22%); }
+  .ok { color: var(--accent); }
+  .bad { color: var(--danger); }
+  .warn { color: var(--warn); }
+  .muted { color: var(--dim); }
+  .status { min-height: 24px; margin: 0; font-size: 14px; line-height: 1.7; }
+  .empty { padding: 24px; color: var(--dim); text-align: center; }
+  pre { margin: 0; max-height: 320px; overflow: auto; padding: 16px; background: var(--surface); font: 12px/1.7 ui-monospace, SFMono-Regular, Consolas, monospace; }
+  .audit-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  .audit-card { display: grid; gap: 16px; align-content: start; min-width: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+  @media (max-width: 760px) {
+    header { align-items: flex-start; padding: 16px; }
+    .scope { display: none; }
+    main { gap: 48px; padding: 32px 16px 64px; }
+    .stats, .audit-grid { grid-template-columns: 1fr; }
+    .section-head { align-items: flex-start; flex-direction: column; }
+    .controls { align-items: stretch; flex-direction: column; }
+    .field, .field.medium { width: 100%; }
+  }
+  @media (prefers-reduced-motion: reduce) { button:active { transform: none; } }
 </style>
 </head>
 <body>
-<header><h1>Pool Operator Console <span class="muted">(localhost only)</span></h1><span class="muted">read-only + audit actions</span></header>
+<header>
+  <div><h1>Pool Operator Console</h1><p>Private wallet evidence and audited controls</p></div>
+  <span class="scope">localhost only</span>
+</header>
 <main>
-  <h2>Blocks</h2>
-  <div><input id="rehash" placeholder="block hash or id" style="width:420px"> <button onclick="recompute()">recompute allocation (audit)</button></div>
-  <div id="recompute-out"></div>
-  <table><thead><tr><th>state</th><th>height</th><th>reward</th><th>edge</th><th>hash</th></tr></thead>
-  <tbody id="blocks"></tbody></table>
+  <section aria-labelledby="treasury-title">
+    <div class="section-head">
+      <div><h2 id="treasury-title">Treasury</h2><p class="section-copy">Latest measured spendable value, miner liabilities, payout work, and durable sweep evidence.</p></div>
+      <button type="button" onclick="loadTreasury()">Refresh treasury</button>
+    </div>
+    <div class="stats" aria-label="Treasury summary">
+      <div class="stat"><span>Total tracked</span><strong id="treasury-total">—</strong></div>
+      <div class="stat"><span>Mature spendable</span><strong id="treasury-spendable">—</strong></div>
+      <div class="stat"><span>Miner liabilities</span><strong id="treasury-owed">—</strong></div>
+    </div>
 
-  <h2>Ledger verify</h2>
-  <button onclick="verifyLedger()">run conservation check</button>
-  <pre id="ledger"></pre>
+    <div class="panel">
+      <div class="panel-head"><h3>Held payouts</h3><span class="muted">Release overrides an unattended cap</span></div>
+      <div class="table-wrap"><table><thead><tr><th>Batch</th><th>Reason</th><th>Amount</th><th>Recipients</th><th>Created</th><th>Action</th></tr></thead><tbody id="held"></tbody></table></div>
+    </div>
+    <p id="release-status" class="status" role="status" aria-live="polite"></p>
 
-  <h2>Payout batch inspect</h2>
-  <input id="batch" placeholder="batch id" style="width:320px"> <button onclick="inspectBatch()">inspect</button>
-  <pre id="payout"></pre>
+    <div class="panel">
+      <div class="panel-head"><h3>Pending payouts</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>State</th><th>Batch</th><th>Amount</th><th>Recipients</th><th>Transaction</th></tr></thead><tbody id="pending"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Income reconciliation</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>Block</th><th>Payout block</th><th>Amount</th><th>Pool block state</th><th>Confirmed</th></tr></thead><tbody id="receipts"></tbody></table></div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><h3>Cold sweep history</h3></div>
+      <div class="table-wrap"><table><thead><tr><th>State</th><th>Amount</th><th>Cold destination</th><th>Transaction</th><th>Created</th></tr></thead><tbody id="sweeps"></tbody></table></div>
+    </div>
+  </section>
 
-  <h2>Event replay status (per edge)</h2>
-  <button onclick="loadEvents()">refresh</button>
-  <pre id="events"></pre>
+  <section aria-labelledby="blocks-title">
+    <div><h2 id="blocks-title">Blocks</h2><p class="section-copy">Review recent block lifecycle state or recompute an allocation hash without changing it.</p></div>
+    <div class="controls"><div class="field"><label for="rehash">Block hash or ID</label><input id="rehash" autocomplete="off"></div><button type="button" onclick="recompute()">Recompute allocation</button></div>
+    <div id="recompute-out" class="status" role="status" aria-live="polite"></div>
+    <div class="panel table-wrap"><table><thead><tr><th>State</th><th>Height</th><th>Reward</th><th>Edge</th><th>Hash</th></tr></thead><tbody id="blocks"></tbody></table></div>
+  </section>
 
-  <h2>Miner balance</h2>
-  <input id="minerAddr" placeholder="ckb address" style="width:420px"> <button onclick="loadMiner()">lookup</button>
-  <pre id="miner"></pre>
+  <section aria-labelledby="audit-title">
+    <div><h2 id="audit-title">Audit tools</h2><p class="section-copy">Read-only checks and lookups. No tool in this section broadcasts wallet transactions.</p></div>
+    <div class="audit-grid">
+      <div class="audit-card panel"><div class="panel-head"><h3>Ledger conservation</h3><button type="button" onclick="verifyLedger()">Run check</button></div><pre id="ledger">No check run.</pre></div>
+      <div class="audit-card panel"><div class="panel-head"><h3>Event replay status</h3><button type="button" onclick="loadEvents()">Refresh</button></div><pre id="events">Not loaded.</pre></div>
+      <div class="audit-card panel"><div class="panel-head"><h3>Payout batch inspect</h3></div><div class="controls" style="padding:16px"><div class="field medium"><label for="batch">Batch ID</label><input id="batch" autocomplete="off"></div><button type="button" onclick="inspectBatch()">Inspect</button></div><pre id="payout">No batch selected.</pre></div>
+      <div class="audit-card panel"><div class="panel-head"><h3>Miner balance</h3></div><div class="controls" style="padding:16px"><div class="field"><label for="minerAddr">CKB address</label><input id="minerAddr" autocomplete="off"></div><button type="button" onclick="loadMiner()">Look up</button></div><pre id="miner">No miner selected.</pre></div>
+    </div>
+  </section>
 </main>
 <script>
 const TOKEN = '__TOKEN__';
-const q = (s) => document.querySelector(s);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const api = (p) => fetch(p + (p.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(TOKEN)).then(r => r.json());
+const q = selector => document.querySelector(selector);
+const esc = value => String(value ?? '').replace(/[&<>"']/g, character => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+}[character]));
+const short = value => value ? `${String(value).slice(0, 14)}…` : '—';
+const when = value => value ? new Date(value).toLocaleString() : '—';
+const ckb = value => {
+  if (value == null) return 'not measured';
+  const amount = BigInt(value);
+  const whole = amount / 100000000n;
+  const fraction = (amount % 100000000n).toString().padStart(8, '0').replace(/0+$/, '');
+  return `${whole.toLocaleString()}${fraction ? `.${fraction}` : ''} CKB`;
+};
+async function api(path, options = {}) {
+  const separator = path.includes('?') ? '&' : '?';
+  const response = await fetch(path + separator + 'token=' + encodeURIComponent(TOKEN), options);
+  const body = await response.json();
+  if (!response.ok) throw new Error(body.error || `request failed (${response.status})`);
+  return body;
+}
+const emptyRow = (columns, text) => `<tr><td class="empty" colspan="${columns}">${esc(text)}</td></tr>`;
 
+async function loadTreasury() {
+  try {
+    const data = await api('/admin/treasury');
+    const measured = data.snapshots.filter(row => row.spendable_shannons != null);
+    const totals = data.snapshots.reduce((sum, row) => ({
+      total: sum.total + BigInt(row.total_shannons || 0),
+      spendable: sum.spendable + BigInt(row.spendable_shannons || 0),
+      owed: BigInt(row.owed_shannons || 0) > sum.owed ? BigInt(row.owed_shannons) : sum.owed,
+    }), { total: 0n, spendable: 0n, owed: 0n });
+    q('#treasury-total').textContent = ckb(totals.total);
+    q('#treasury-spendable').textContent = ckb(measured.length ? totals.spendable : null);
+    q('#treasury-owed').textContent = ckb(totals.owed);
+    q('#held').innerHTML = data.held.length ? data.held.map(row => `<tr><td title="${esc(row.id)}">${esc(short(row.id))}</td><td class="warn">${esc(row.held_reason || 'operator review')}</td><td>${esc(ckb(row.total_shannons))}</td><td>${row.recipients}</td><td>${esc(when(row.created_at))}</td><td><button type="button" class="caution release" data-batch-id="${esc(row.id)}">Release held batch</button></td></tr>`).join('') : emptyRow(6, 'No payout batches are held.');
+    q('#pending').innerHTML = data.pending.length ? data.pending.map(row => `<tr><td>${esc(row.state)}</td><td title="${esc(row.id)}">${esc(short(row.id))}</td><td>${esc(ckb(row.total_shannons))}</td><td>${row.recipients}</td><td title="${esc(row.tx_hash)}">${esc(short(row.tx_hash))}</td></tr>`).join('') : emptyRow(5, 'No payouts are reserved, built, or broadcast.');
+    q('#receipts').innerHTML = data.receipts.length ? data.receipts.map(row => `<tr><td>${row.block_height}</td><td>${row.payout_block_height}</td><td>${esc(ckb(row.amount_shannons))}</td><td>${esc(row.block_state)}</td><td>${esc(when(row.confirmed_at))}</td></tr>`).join('') : emptyRow(5, 'No treasury income has been reconciled yet.');
+    q('#sweeps').innerHTML = data.sweeps.length ? data.sweeps.map(row => `<tr><td>${esc(row.state)}</td><td>${esc(ckb(row.amount_shannons))}</td><td title="${esc(row.cold_address)}">${esc(short(row.cold_address))}</td><td title="${esc(row.tx_hash)}">${esc(short(row.tx_hash))}</td><td>${esc(when(row.created_at))}</td></tr>`).join('') : emptyRow(5, 'No cold sweeps have been recorded.');
+  } catch (error) {
+    q('#release-status').className = 'status bad';
+    q('#release-status').textContent = `Treasury refresh failed: ${error.message}`;
+  }
+}
+async function releaseBatch(button) {
+  const batchId = button.dataset.batchId;
+  if (!confirm(`Release HELD batch ${batchId}? This overrides the unattended payout cap and will be audited.`)) return;
+  button.disabled = true;
+  const original = button.textContent;
+  button.textContent = 'Releasing…';
+  try {
+    const released = await api('/admin/batches/release', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ batchId }),
+    });
+    q('#release-status').className = 'status ok';
+    q('#release-status').textContent = `Batch ${released.id} released by ${released.released_by}. The wallet will see it on its next tick.`;
+    await loadTreasury();
+  } catch (error) {
+    q('#release-status').className = 'status bad';
+    q('#release-status').textContent = `Release refused: ${error.message}`;
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+q('#held').addEventListener('click', event => {
+  const button = event.target.closest('button.release');
+  if (button) releaseBatch(button);
+});
 async function loadBlocks() {
-  const b = await api('/admin/blocks');
-  q('#blocks').innerHTML = b.map(x => `<tr><td>${esc(x.state)}</td><td>${x.height ?? '—'}</td>
-    <td>${x.reward_shannons ?? '—'}</td><td>${esc(x.edge_id)}</td><td class="muted">${esc((x.block_hash || '').slice(0, 16))}…</td></tr>`).join('');
+  try {
+    const blocks = await api('/admin/blocks');
+    q('#blocks').innerHTML = blocks.length ? blocks.map(row => `<tr><td>${esc(row.state)}</td><td>${row.height ?? '—'}</td><td>${esc(ckb(row.reward_shannons))}</td><td>${esc(row.edge_id)}</td><td class="muted" title="${esc(row.block_hash)}">${esc(short(row.block_hash))}</td></tr>`).join('') : emptyRow(5, 'No pool blocks recorded.');
+  } catch (error) { q('#blocks').innerHTML = emptyRow(5, `Blocks failed to load: ${error.message}`); }
 }
 async function verifyLedger() {
-  const r = await api('/admin/ledger/verify');
-  q('#ledger').textContent = JSON.stringify(r, null, 2) + (r.conserved ? '\n✓ conservation holds' : '\n✗ CONSERVATION FAILURE');
+  try { const result = await api('/admin/ledger/verify'); q('#ledger').textContent = JSON.stringify(result, null, 2) + (result.conserved ? '\nPASS: conservation holds' : '\nFAIL: conservation mismatch'); }
+  catch (error) { q('#ledger').textContent = `Check failed: ${error.message}`; }
 }
 async function inspectBatch() {
-  const r = await api('/admin/payout?batch=' + encodeURIComponent(q('#batch').value));
-  q('#payout').textContent = JSON.stringify(r, null, 2);
+  try { q('#payout').textContent = JSON.stringify(await api('/admin/payout?batch=' + encodeURIComponent(q('#batch').value)), null, 2); }
+  catch (error) { q('#payout').textContent = `Lookup failed: ${error.message}`; }
 }
 async function loadEvents() {
-  const r = await api('/admin/events');
-  q('#events').textContent = JSON.stringify(r, null, 2);
+  try { q('#events').textContent = JSON.stringify(await api('/admin/events'), null, 2); }
+  catch (error) { q('#events').textContent = `Refresh failed: ${error.message}`; }
 }
 async function loadMiner() {
-  const r = await api('/admin/miner?address=' + encodeURIComponent(q('#minerAddr').value));
-  q('#miner').textContent = JSON.stringify(r, null, 2);
+  try { q('#miner').textContent = JSON.stringify(await api('/admin/miner?address=' + encodeURIComponent(q('#minerAddr').value)), null, 2); }
+  catch (error) { q('#miner').textContent = `Lookup failed: ${error.message}`; }
 }
 async function recompute() {
-  const r = await api('/admin/blocks/recompute?hash=' + encodeURIComponent(q('#rehash').value));
-  q('#recompute-out').innerHTML = r.match
-    ? '<p class="ok">✓ allocation hash matches the stored snapshot</p>'
-    : `<p class="bad">✗ MISMATCH — stored ${esc(r.stored_hash)} recomputed ${esc(r.recomputed_hash)}</p>`;
+  try {
+    const result = await api('/admin/blocks/recompute?hash=' + encodeURIComponent(q('#rehash').value));
+    q('#recompute-out').className = result.match ? 'status ok' : 'status bad';
+    q('#recompute-out').textContent = result.match ? 'PASS: allocation hash matches the stored snapshot.' : `FAIL: stored ${result.stored_hash}; recomputed ${result.recomputed_hash}.`;
+  } catch (error) { q('#recompute-out').className = 'status bad'; q('#recompute-out').textContent = `Audit failed: ${error.message}`; }
 }
+loadTreasury();
 loadBlocks();
 </script>
 </body>

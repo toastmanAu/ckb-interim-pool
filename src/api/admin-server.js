@@ -7,7 +7,9 @@
  * operations: block states, allocation recompute (read-only audit),
  * miner balances, ledger verify, payout inspection, event replay status.
  *
- * No state-changing admin actions here — payouts stay on the timer/CLI.
+ * The one state-changing action releases a HELD payout batch to RESERVED.
+ * It writes only the database audit row; the wallet still listens on no port
+ * and decides whether to broadcast on its next armed tick.
  */
 
 const http = require('node:http');
@@ -32,13 +34,50 @@ function safeEqual(a, b) {
   return crypto.timingSafeEqual(ha, hb);
 }
 
-function createAdminServer({ db, token = process.env.POOL_ADMIN_TOKEN || '', logger = console }) {
+function bearerToken(req) {
+  const header = req.headers.authorization;
+  if (typeof header !== 'string') return '';
+  const match = /^Bearer\s+(.+)$/i.exec(header);
+  return match ? match[1] : '';
+}
+
+function readJson(req, limit = 16 * 1024) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    let rejected = false;
+    req.setEncoding('utf8');
+    req.on('data', chunk => {
+      if (rejected) return;
+      body += chunk;
+      if (Buffer.byteLength(body) > limit) {
+        rejected = true;
+        reject(new Error('request body is too large'));
+      }
+    });
+    req.on('end', () => {
+      if (rejected) return;
+      try { resolve(JSON.parse(body || '{}')); }
+      catch { reject(new Error('request body must be valid JSON')); }
+    });
+    req.on('error', reject);
+  });
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function createAdminServer({
+  db,
+  token = process.env.POOL_ADMIN_TOKEN || '',
+  operator = process.env.POOL_ADMIN_OPERATOR || 'admin-console',
+  logger = console,
+}) {
   const dashboard = fs.readFileSync(path.join(__dirname, 'admin.html'), 'utf8');
 
   async function handle(req, res) {
     const url = new URL(req.url, 'http://x');
     const q = Object.fromEntries(url.searchParams);
-    const authed = token !== '' && safeEqual(q.token, token);
+    const suppliedToken = bearerToken(req) || q.token || '';
+    const authed = token !== '' && safeEqual(suppliedToken, token);
 
     if (req.method === 'GET' && url.pathname === '/') {
       if (!authed) return json(res, 401, { error: 'unauthorized' });
@@ -125,12 +164,96 @@ function createAdminServer({ db, token = process.env.POOL_ADMIN_TOKEN || '', log
         )).rows;
         return json(res, 200, perEdge);
       }
+      case 'treasury': {
+        if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' });
+        const [snapshots, receipts, held, pending, sweeps] = await Promise.all([
+          db.query(
+            `SELECT DISTINCT ON (lock_args)
+                    lock_args, total_shannons, spendable_shannons, cell_count,
+                    owed_shannons, taken_at
+               FROM treasury_snapshots
+              ORDER BY lock_args, taken_at DESC`,
+          ),
+          db.query(
+            `SELECT r.block_height, r.payout_block_height, r.amount_shannons,
+                    r.lock_args, r.payout_tx_hash, r.output_index,
+                    r.confirmed_at, r.voided_at, b.block_hash, b.state AS block_state
+               FROM treasury_receipts r
+               JOIN blocks b ON b.id = r.block_id
+              ORDER BY r.block_height DESC LIMIT 100`,
+          ),
+          db.query(
+            `SELECT b.id::text, b.state, b.held_reason, b.created_at,
+                    b.released_by, b.released_at,
+                    COALESCE(sum(i.amount_shannons), 0)::text AS total_shannons,
+                    count(i.*)::int AS recipients
+               FROM payout_batches b
+               LEFT JOIN payout_items i ON i.batch_id = b.id
+              WHERE b.state = 'HELD'
+              GROUP BY b.id
+              ORDER BY b.created_at DESC`,
+          ),
+          db.query(
+            `SELECT b.id::text, b.state, b.tx_hash, b.created_at,
+                    b.broadcast_at, b.confirmed_at,
+                    COALESCE(sum(i.amount_shannons), 0)::text AS total_shannons,
+                    count(i.*)::int AS recipients
+               FROM payout_batches b
+               LEFT JOIN payout_items i ON i.batch_id = b.id
+              WHERE b.state IN ('RESERVED', 'BUILT', 'BROADCAST')
+              GROUP BY b.id
+              ORDER BY b.created_at DESC`,
+          ),
+          db.query(
+            `SELECT id::text, state, cold_address, amount_shannons,
+                    created_at, built_at, broadcast_at, confirmed_at,
+                    tx_hash, fee_shannons, error
+               FROM wallet_sweeps
+              ORDER BY created_at DESC LIMIT 100`,
+          ),
+        ]);
+        return json(res, 200, {
+          snapshots: snapshots.rows,
+          receipts: receipts.rows,
+          held: held.rows,
+          pending: pending.rows,
+          sweeps: sweeps.rows,
+        });
+      }
+      case 'batches/release': {
+        if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' });
+        let body;
+        try { body = await readJson(req); }
+        catch (error) { return json(res, 400, { error: error.message }); }
+        if (typeof body.batchId !== 'string' || !UUID.test(body.batchId)) {
+          return json(res, 400, { error: 'batchId must be a UUID' });
+        }
+        const released = await db.query(
+          `UPDATE payout_batches
+              SET state = 'RESERVED', released_by = $2, released_at = now()
+            WHERE id = $1 AND state = 'HELD'
+            RETURNING id::text, state, released_by, released_at`,
+          [body.batchId, operator],
+        );
+        if (released.rowCount === 0) {
+          return json(res, 409, { error: `batch ${body.batchId} is not HELD` });
+        }
+        logger.log('ADMIN', `operator ${operator} released payout batch ${body.batchId}`);
+        return json(res, 200, released.rows[0]);
+      }
       default:
         return json(res, 404, { error: 'not found' });
     }
   }
 
-  return { server: http.createServer(handle) };
+  const server = http.createServer((req, res) => {
+    Promise.resolve(handle(req, res)).catch(error => {
+      logger.log('ADMIN', `request failed: ${error.message}`);
+      if (!res.headersSent) json(res, 500, { error: 'internal server error' });
+      else res.destroy();
+    });
+  });
+  return { server };
 }
 
 module.exports = { createAdminServer };

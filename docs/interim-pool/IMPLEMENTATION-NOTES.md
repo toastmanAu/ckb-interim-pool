@@ -288,9 +288,13 @@ without the dev node).
   **127.0.0.1 only**, token auth (`POOL_ADMIN_TOKEN`, timing-safe
   compare), wraps poolctl operations — block states, allocation
   recompute audit (hash match vs stored snapshot), ledger conservation
-  verify, payout batch inspect, miner balances, event replay status.
-  Read-only + audit; payouts remain on the timer/CLI (spec 05 §7).
-  `test/admin.integration.test.js` covers auth + endpoints.
+  verify, payout batch inspect, miner balances, event replay status,
+  measured treasury snapshots, reconciled receipts, pending/held batches,
+  and durable cold-sweep history. The only mutation conditionally releases a
+  `HELD` batch to `RESERVED`, stamping `POOL_ADMIN_OPERATOR`; the wallet still
+  listens on no port and picks it up on its next tick. Bearer and dashboard
+  token auth are supported. `test/admin.integration.test.js` covers auth,
+  views, refusal paths, and the release audit trail.
 
 ## Miner-facing dashboard v2 + session hygiene
 
