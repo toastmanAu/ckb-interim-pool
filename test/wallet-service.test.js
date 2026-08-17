@@ -30,8 +30,9 @@ test('receipt metrics are typed as gauges, not counters', () => {
 });
 
 test('payout and insolvency failures have distinct metrics', () => {
-  const out = buildMetrics({ payout_errors: 2, insolvency: 3 });
+  const out = buildMetrics({ payout_errors: 2, sweep_errors: 4, insolvency: 3 });
   assert.match(out, /pool_wallet_payout_errors_total 2/);
+  assert.match(out, /pool_wallet_sweep_errors_total 4/);
   assert.match(out, /pool_wallet_insolvency_total 3/);
 });
 

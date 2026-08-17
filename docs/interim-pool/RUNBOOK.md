@@ -160,6 +160,21 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
    HELD and requires a fresh approval.
 3. Re-arm only after the returned audit row and wallet metrics are correct.
 
+### Cold sweep failure
+
+1. Keep the wallet unarmed while investigating. Inspect the newest
+   `wallet_sweeps` row and the current `wallet_config` record.
+2. `BUILT` means signed bytes and the hash were persisted before the send
+   attempt; `BROADCAST` means the node accepted the transaction. Check the
+   saved `tx_hash` with `get_transaction` before any manual action.
+3. Missing chain evidence is not proof that the sweep failed. Leave the row
+   unresolved; the worker blocks replacement sweeps until evidence appears.
+4. A cold-address mismatch is a TOFU refusal, not a retryable broadcast
+   error. Verify the address out-of-band before approving any record change.
+5. The sweep amount is a fixed cold output with hot change, derived from the
+   latest measured mature balance minus the hot float and all unpaid miner
+   balances. Payout `RESERVED`/`BUILT`/`BROADCAST` work always blocks a sweep.
+
 ### Allocation stopped (blocks stuck MATURE)
 1. `poolctl wallet status` — is `blocks_awaiting_reconciliation` growing?
 2. `systemctl status pool-wallet`; `curl localhost:9102/metrics | grep ticks`.

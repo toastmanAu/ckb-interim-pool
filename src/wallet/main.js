@@ -17,6 +17,7 @@ const { snapshotTreasuryLocks } = require('./treasury.js');
 const { loadKeystore } = require('./keystore.js');
 const { createCkbInProcessBuilder } = require('./tx-builder-inprocess.js');
 const { createPayoutWorker } = require('./payout-worker.js');
+const { createColdSweepWorker } = require('./sweep.js');
 const { BUILD_INFO } = require('../common/build-info.js');
 
 const HELP_BUILD = '# HELP pool_build_info commit this process was started from (1 = always)';
@@ -52,6 +53,7 @@ function configurePayout({
   loadKeystoreFn = loadKeystore,
   createBuilderFn = createCkbInProcessBuilder,
   createWorkerFn = createPayoutWorker,
+  createSweepWorkerFn = createColdSweepWorker,
 }) {
   const requestedArmed = isArmed(env);
   const keyPath = env.POOL_WALLET_KEY;
@@ -85,8 +87,24 @@ function configurePayout({
     },
     logger,
   });
+  let sweepWorker = null;
+  if (env.POOL_WALLET_COLD_ADDRESS) {
+    if (!env.POOL_INDEXER_URL) {
+      throw new Error('POOL_INDEXER_URL is required when cold sweeps are configured');
+    }
+    sweepWorker = createSweepWorkerFn({
+      db,
+      txBuilder,
+      rpcClient,
+      coldAddress: env.POOL_WALLET_COLD_ADDRESS,
+      treasuryLockArgs: keystore.lock.args,
+      floatShannons: env.POOL_WALLET_FLOAT_SHANNONS || '500000000000',
+      network: env.POOL_WALLET_NETWORK || 'ckb',
+      logger,
+    });
+  }
   logger.log('WALLET', `signing key loaded for ${keystore.address}; armed=${requestedArmed}`);
-  return { keystore, payoutWorker, armed: requestedArmed };
+  return { keystore, payoutWorker, sweepWorker, armed: requestedArmed };
 }
 
 /**
@@ -109,6 +127,18 @@ async function runPayoutPass({ payoutWorker, armed, metrics, logger = console })
   }
 }
 
+/** Cold movement is stricter than batch construction: unarmed means no call. */
+async function runSweepPass({ sweepWorker, armed, metrics, logger = console }) {
+  if (!sweepWorker || !armed) return null;
+  try {
+    return await sweepWorker.runOnce();
+  } catch (error) {
+    metrics.sweep_errors = (metrics.sweep_errors || 0) + 1;
+    logger.log('SWEEP', `tick failed: ${error.message}`);
+    return null;
+  }
+}
+
 /**
  * @param {{ticks?: number, rpc_errors?: number, snapshot_errors?: number}} m  process-scoped counters
  * @param {{total?: number, confirmed?: number, pending?: number, voided?: number}} counts
@@ -126,6 +156,7 @@ function buildMetrics(m, counts = {}) {
     // fault, not a reconciliation fault, and must not masquerade as one
     `pool_wallet_snapshot_errors_total ${m.snapshot_errors || 0}`,
     `pool_wallet_payout_errors_total ${m.payout_errors || 0}`,
+    `pool_wallet_sweep_errors_total ${m.sweep_errors || 0}`,
     `pool_wallet_insolvency_total ${m.insolvency || 0}`,
     '# HELP pool_wallet_receipts_total treasury receipts recorded, any state (read from the database, not accumulated in process)',
     '# TYPE pool_wallet_receipts_total gauge',
@@ -151,12 +182,23 @@ async function main() {
     host: nodeUrl.replace(/^https?:\/\//, '').split(':')[0],
     port: parseInt(nodeUrl.split(':').pop() || '8114', 10),
   });
+  const indexerUrl = process.env.POOL_INDEXER_URL || null;
+  const indexerEndpoint = indexerUrl ? new URL(indexerUrl) : null;
+  const indexerRpcClient = indexerEndpoint ? createRpcClient({
+    host: indexerEndpoint.hostname,
+    port: parseInt(indexerEndpoint.port || '8114', 10),
+  }) : null;
+  const rpcByUrl = async (url, method, params) => {
+    if (indexerUrl && url === indexerUrl) return indexerRpcClient.rpc(method, params);
+    return rpcClient.rpc(method, params);
+  };
 
   const metrics = {
     ticks: 0,
     rpc_errors: 0,
     snapshot_errors: 0,
     payout_errors: 0,
+    sweep_errors: 0,
     insolvency: 0,
   };
   const reconciler = createReconciler({
@@ -165,7 +207,7 @@ async function main() {
     logger: console,
   });
 
-  const { keystore, payoutWorker, armed } = configurePayout({
+  const { keystore, payoutWorker, sweepWorker, armed } = configurePayout({
     env: process.env,
     db,
     nodeUrl,
@@ -216,8 +258,28 @@ async function main() {
     await runPayoutPass({ payoutWorker, armed, metrics, logger: console });
     if (payoutWorker) metrics.insolvency = payoutWorker.stats.insolvency;
 
-    try { await snapshotTreasuryLocks(db); }
-    catch (e) { metrics.snapshot_errors++; console.log('WALLET', `snapshot failed: ${e.message}`); }
+    let measuredForSweep = false;
+    try {
+      if (keystore && indexerUrl) {
+        const tip = await rpcClient.rpc('get_tip_header', []);
+        await snapshotTreasuryLocks(db, {
+          indexerUrl,
+          nodeUrl,
+          rpc: rpcByUrl,
+          tipEpochHex: tip.epoch,
+          lock: keystore.lock,
+        });
+        measuredForSweep = true;
+      } else {
+        await snapshotTreasuryLocks(db);
+      }
+    } catch (e) {
+      metrics.snapshot_errors++;
+      console.log('WALLET', `snapshot failed: ${e.message}`);
+    }
+    if (measuredForSweep) {
+      await runSweepPass({ sweepWorker, armed, metrics, logger: console });
+    }
   };
 
   const intervalMs = parseInt(process.env.POOL_WALLET_TICK_MS || '300000', 10);
@@ -244,4 +306,5 @@ module.exports = {
   isArmed,
   configurePayout,
   runPayoutPass,
+  runSweepPass,
 };

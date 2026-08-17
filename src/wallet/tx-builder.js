@@ -30,6 +30,7 @@ const {
   collectLiveCells,
 } = require('./cells.js');
 const { spendableSplit } = require('./treasury.js');
+const { bech32Decode } = require('../stratum/username.js');
 
 /**
  * WitnessArgs { lock: Option<Bytes>, input_type: Option<Bytes>, output_type: Option<Bytes> }
@@ -77,6 +78,33 @@ function lockOf(pubkeyCompressedHex) {
 const SIGHASH_ALL_TYPE_HASH = '0x9bd7e06f3ecf4be0f2fcd2188b23f1b9fcc88e5d4b65a8637b17723bbda3cce8';
 const SECP_DATA_HASH = '0x9799bee251b975b82c45a02154ce28cec89c5853ecc14d12b7b8cccfc19e0af4';
 const MIN_SIGHASH_CELL_SHANNONS = 6_100_000_000n;
+
+function decodeRecipientAddress(address) {
+  const decoded = bech32Decode(address);
+  if (!decoded) throw new Error(`unsupported address payload: ${address}`);
+  const payload = decoded.data;
+  if (payload[0] === 0x01) {
+    const codeHashes = { 0x00: SIGHASH_ALL_TYPE_HASH };
+    const codeHash = codeHashes[payload[1]];
+    if (!codeHash) throw new Error(`unsupported code_hash_index ${payload[1]}`);
+    return {
+      code_hash: codeHash,
+      hash_type: 'type',
+      args: '0x' + Buffer.from(payload.slice(2)).toString('hex'),
+    };
+  }
+  if (payload[0] === 0x00 && payload.length >= 34) {
+    const hashTypes = { 0: 'data', 1: 'type', 2: 'data1', 4: 'data2' };
+    const hashType = hashTypes[payload[33]];
+    if (!hashType) throw new Error(`unsupported hash_type ${payload[33]}`);
+    return {
+      code_hash: '0x' + Buffer.from(payload.slice(1, 33)).toString('hex'),
+      hash_type: hashType,
+      args: '0x' + Buffer.from(payload.slice(34)).toString('hex'),
+    };
+  }
+  throw new Error(`unsupported address payload: ${address}`);
+}
 
 /**
  * Resolve the secp256k1_blake160_sighash_all cell deps from the genesis.
@@ -293,18 +321,11 @@ async function buildPayoutTransaction({ rpcUrl, privateKey, toAddresses, feeRate
   if (cells.length === 0) throw new Error('no pool cells found to spend');
 
   // decode recipient addresses → lock scripts (short ckt/ckb payloads)
-  const { bech32Decode } = require('../stratum/username.js');
   const targets = toAddresses.map(a => {
-    const dec = bech32Decode(a.address);
-    if (!dec || dec.data[0] !== 0x01) throw new Error(`unsupported address payload: ${a.address}`);
-    const idx = dec.data[1];
-    const args = dec.data.slice(2);
-    const codeHashes = { 0x00: SIGHASH_ALL_TYPE_HASH };
-    if (!codeHashes[idx]) throw new Error(`unsupported code_hash_index ${idx}`);
     return {
       address: a.address,
       capacityShannons: a.capacityShannons !== null ? BigInt(a.capacityShannons) : null,
-      lock: { code_hash: codeHashes[idx], hash_type: 'type', args: '0x' + Buffer.from(args).toString('hex') },
+      lock: decodeRecipientAddress(a.address),
     };
   });
 
@@ -456,4 +477,5 @@ module.exports = {
   planPayoutAmounts,
   lockOf,
   estimateSize,
+  decodeRecipientAddress,
 };

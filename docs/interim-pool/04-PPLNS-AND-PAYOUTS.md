@@ -188,7 +188,13 @@ Recommended operational split:
 - block rewards collect to a dedicated pool collection lock/address;
 - payout worker spends from controlled payout-capable cells;
 - public edge contains only payout destination configuration, never private key material;
-- optional periodic sweep from collection to payout wallet may be introduced, but keep the accounting trail explicit.
+- mature surplus above `POOL_WALLET_FLOAT_SHANNONS` and every positive unpaid
+  miner balance moves to the validated cold address only while armed;
+- the first cold address is recorded in `wallet_config`. A later configured
+  change is refused until its durable TOFU record is deliberately updated;
+- every sweep persists signed bytes and a transaction hash in `wallet_sweeps`
+  before broadcast. `BUILT`/`BROADCAST` evidence is reconciled before another
+  sweep, and the history remains queryable after confirmation.
 
 ## 14. Audit commands
 

@@ -342,6 +342,12 @@ session record for the full timeline and evidence.
   `BUILT`/`BROADCAST` batches are reconciled against the node before any new
   payout; only `committed` posts `miner_paid`, reverses the pending
   reservation, and books the exact input-minus-output fee once.
+- **Cold sweep with TOFU**: short and full RFC 0021 destinations decode to an
+  exact output lock at startup. The worker moves only measured mature surplus
+  above the hot float and positive confirmed/pending miner liabilities, and
+  only while armed. `wallet_sweeps` persists `BUILT` evidence before send and
+  reconciles it against the node before any replacement; concurrent first use
+  can trust exactly one configured cold address.
 - `POOL_MATURITY_EPOCHS` env for the block-service (dev chain uses 0).
 - The dev drill now flushes the mempool first (mines ~8s) so reruns never
   double-spend pending cells; `test/payout-tx.test.js` mines blocks
