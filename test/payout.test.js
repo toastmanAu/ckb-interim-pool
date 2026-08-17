@@ -89,10 +89,10 @@ test('payout: reservation, broadcast, confirmation, no double-pay', { timeout: 6
   const bat = (await db.query(`SELECT state FROM payout_batches WHERE id = $1`, [batch1.batchId])).rows[0];
   assert.strictEqual(bat.state, 'BROADCAST');
 
-  // ledger moved: confirmed → pending → paid
+  // Broadcast alone only reserves the balance; PAID waits for commitment.
   assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.CONFIRMED])).toString(), '0');
-  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.PENDING_PAYOUT])).toString(), '0');
-  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.PAID])).toString(), '500000000000');
+  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.PENDING_PAYOUT])).toString(), '500000000000');
+  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.PAID])).toString(), '0');
 
   // ── sweep 2: nothing eligible → no new batch ─────────────────────────────
   const batch2 = await worker.runOnce();
@@ -111,27 +111,31 @@ test('payout: reservation, broadcast, confirmation, no double-pay', { timeout: 6
       throw new Error('unexpected ' + method);
     },
   };
-  // mark both paid txs as committed on-chain
-  const paidTxs = (await db.query(
-    `SELECT metadata->>'txHash' AS tx FROM ledger_entries WHERE reference_type='payout' AND account_type='miner_paid'`,
-  )).rows.map(r => r.tx);
-  paidTxs.forEach(tx => confirmed.add(tx));
+  // mark the batch's durably saved transaction hash as committed on-chain
+  const batch1Hash = (await db.query(
+    `SELECT tx_hash FROM payout_batches WHERE id = $1`, [batch1.batchId])).rows[0].tx_hash;
+  confirmed.add(batch1Hash);
   await worker.confirmBatch(batch1.batchId, mockRpc);
   const finalBatch = (await db.query(`SELECT state FROM payout_batches WHERE id = $1`, [batch1.batchId])).rows[0];
   assert.strictEqual(finalBatch.state, 'CONFIRMED');
+  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.PENDING_PAYOUT])).toString(), '0');
+  assert.strictEqual((await balanceFor(db, aId, [ACCOUNTS.PAID])).toString(), '500000000000');
 
-  // ── crash recovery: a stale BROADCAST item must NOT double-pay ────────────
-  // simulate: an item that was broadcast but the batch row was left CREATED
+  // ── crash recovery: a stale item state must NOT double-pay ────────────────
+  // Simulate an item update lost after the batch transaction was broadcast.
   await seedConfirmed(db, ADDR_B, 300_000_000_000n, 'seed2');
   const r = await worker.runOnce();
   assert.ok(r);
+  const recoveryHash = (await db.query(
+    `SELECT tx_hash FROM payout_batches WHERE id = $1`, [r.batchId])).rows[0].tx_hash;
+  confirmed.add(recoveryHash);
   // pretend we crashed right after broadcast: reset one item to RESERVED
   await db.query(
     `UPDATE payout_items SET state = 'RESERVED'
      WHERE id = (SELECT id FROM payout_items WHERE batch_id = $1 LIMIT 1)`,
     [r.batchId],
   );
-  // recovery sees the ledger 'paid' entries + (mock) on-chain tx and re-marks
+  // recovery sees durable batch evidence + the committed node transaction
   await worker.recoverPendingBatches(mockRpc);
   await worker.confirmBatch(r.batchId, mockRpc);
   // the previously-paid amount must never have been sent twice: miner B was

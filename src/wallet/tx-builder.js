@@ -260,7 +260,10 @@ function planPayoutAmounts({
 }
 
 /**
- * Build, sign and broadcast a payout transaction.
+ * Build and sign a payout transaction without broadcasting it. The raw
+ * transaction hash is known before send_transaction, which lets the payout
+ * worker persist durable recovery evidence before crossing the network
+ * boundary.
  * @param {object} p
  * @param {string} p.rpcUrl
  * @param {Buffer} p.privateKey
@@ -270,7 +273,7 @@ function planPayoutAmounts({
  * @param {number} p.feeRateShannons   fee per byte (dev chain: 1000)
  * @returns {Promise<{txHash:string, inputs:number, outputs:Array, feeShannons:string}>}
  */
-async function buildAndSendPayout({ rpcUrl, privateKey, toAddresses, feeRateShannons = 1000, indexerUrl = null }) {
+async function buildPayoutTransaction({ rpcUrl, privateKey, toAddresses, feeRateShannons = 1000, indexerUrl = null }) {
   const pub = secp256k1.getPublicKey(privateKey, true);
   const lock = lockOf(Buffer.from(pub).toString('hex'));
   const cellDeps = await resolveSecpDeps(rpcUrl);
@@ -388,13 +391,33 @@ async function buildAndSendPayout({ rpcUrl, privateKey, toAddresses, feeRateShan
     witnesses: ['0x' + witnessArgs('0x' + signatureBytes.toString('hex')).toString('hex')],
   };
 
-  const sentHash = await rpc(rpcUrl, "send_transaction", [finalTx]);
   return {
-    txHash: sentHash,
+    txHash: '0x' + txHash.toString('hex'),
+    rawTx: finalTx,
     inputs: cells.length,
     outputs: outputs.map(o => ({ capacity: o.capacity.toString(), lock: o.lock })),
     feeShannons: amounts.actualFee.toString(),
   };
+}
+
+/** Broadcast an already-signed transaction and reject unexpected hash drift. */
+async function broadcastPayout({ rpcUrl, rawTx, expectedTxHash = null }) {
+  const sentHash = await rpc(rpcUrl, 'send_transaction', [rawTx]);
+  if (expectedTxHash && sentHash !== expectedTxHash) {
+    throw new Error(`node returned transaction hash ${sentHash}, expected ${expectedTxHash}`);
+  }
+  return { ok: true, txHash: sentHash };
+}
+
+/** Compatibility helper for drills and direct callers. */
+async function buildAndSendPayout(options) {
+  const built = await buildPayoutTransaction(options);
+  const sent = await broadcastPayout({
+    rpcUrl: options.rpcUrl,
+    rawTx: built.rawTx,
+    expectedTxHash: built.txHash,
+  });
+  return { ...built, txHash: sent.txHash };
 }
 
 /**
@@ -412,7 +435,20 @@ async function buildAndSendBatchPayout({ rpcUrl, privateKey, items, feeRateShann
   });
 }
 
+async function buildBatchPayout({ rpcUrl, privateKey, items, feeRateShannons = 1000, indexerUrl = null }) {
+  return buildPayoutTransaction({
+    rpcUrl,
+    privateKey,
+    indexerUrl,
+    feeRateShannons,
+    toAddresses: items.map(i => ({ address: i.address, capacityShannons: i.capacityShannons })),
+  });
+}
+
 module.exports = {
+  buildPayoutTransaction,
+  buildBatchPayout,
+  broadcastPayout,
   buildAndSendPayout,
   buildAndSendBatchPayout,
   collectPoolCells,

@@ -16,19 +16,32 @@ const { execFile } = require('node:child_process');
 
 /** Deterministic offline builder for tests/dry-run. */
 function createDryRunBuilder({ payoutAddress }) {
+  function builtDocument(recipients) {
+    const rawTx = {
+      kind: 'ckb-batch-transfer-dry-run',
+      from: payoutAddress,
+      recipients,
+      created_at_ms: Date.now(),
+      unsigned: true,
+    };
+    const txHash = '0x' + require('node:crypto')
+      .createHash('sha256').update(JSON.stringify(rawTx)).digest('hex');
+    return {
+      txHash,
+      rawTx,
+      feeShannons: '0',
+      async broadcast() { return { ok: true, txHash }; },
+    };
+  }
   return {
+    async buildBatchTransfer({ items }) {
+      return builtDocument(items.map(item => ({
+        to: item.address,
+        capacity_shannons: item.capacityShannons.toString(),
+      })));
+    },
     async buildTransfer({ toAddress, capacityShannons }) {
-      const rawTx = {
-        kind: 'ckb-transfer-dry-run',
-        from: payoutAddress,
-        to: toAddress,
-        capacity_shannons: capacityShannons.toString(),
-        created_at_ms: Date.now(),
-        unsigned: true,
-      };
-      const txHash = require('node:crypto')
-        .createHash('sha256').update(JSON.stringify(rawTx)).digest('hex');
-      return { txHash: '0x' + txHash, rawTx, async broadcast() { return { ok: true, txHash: '0x' + txHash }; } };
+      return builtDocument([{ to: toAddress, capacity_shannons: capacityShannons.toString() }]);
     },
   };
 }

@@ -124,11 +124,16 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
 
 ### Payout failure
 1. `poolctl payout inspect <batch-id>` — find the state.
-2. Items in `RESERVED` were never broadcast: safe to re-run the sweep.
-3. Items in `BROADCAST`: the tx hash is in the ledger metadata — confirm on
-   the node (`get_transaction`) BEFORE anything else; recovery never
-   re-sends a broadcast amount.
-4. Escalate manually only with an `adjustment` ledger entry + reason.
+2. A `RESERVED` batch has no signed transaction evidence and may be resumed
+   by the worker. Do not manually construct a replacement.
+3. `BUILT` means the signed transaction and hash were saved before the send
+   attempt; `BROADCAST` means the node accepted it. In either state, inspect
+   `payout_batches.tx_hash` and `raw_tx_or_ref`, then call `get_transaction`
+   before doing anything else. Missing chain evidence is not proof that a
+   send failed, so recovery leaves the batch unresolved and blocks new work.
+4. Only `committed` advances the batch to `CONFIRMED`, consumes the pending
+   reservation, posts `miner_paid`, and books the exact fee to `tx_fee`.
+5. Escalate manually only with an `adjustment` ledger entry + reason.
 
 ### Release a HELD payout batch
 

@@ -337,8 +337,11 @@ session record for the full timeline and evidence.
   self-contained builder; the batch amount determined the required scan
   window — an overflow bug when the batch exceeded the 200-block window
   was caught and fixed).
-- **Stuck-batch recovery**: `runOnce` resumes RESERVED batches left by a
-  crash between create and process (spec 04 §12 crash window).
+- **Crash-safe payout recovery**: signed transaction bytes, their raw hash,
+  and the planned fee are persisted in `BUILT` before `send_transaction`.
+  `BUILT`/`BROADCAST` batches are reconciled against the node before any new
+  payout; only `committed` posts `miner_paid`, reverses the pending
+  reservation, and books the exact input-minus-output fee once.
 - `POOL_MATURITY_EPOCHS` env for the block-service (dev chain uses 0).
 - The dev drill now flushes the mempool first (mines ~8s) so reruns never
   double-spend pending cells; `test/payout-tx.test.js` mines blocks

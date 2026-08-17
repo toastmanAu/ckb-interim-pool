@@ -72,13 +72,17 @@ function refusingBuilder() {
 
 function recordingBuilder() {
   const calls = [];
+  const txHash = `0x${'42'.repeat(32)}`;
   return {
     calls,
     async buildBatchTransfer({ items }) {
       calls.push(items);
       return {
+        txHash,
+        rawTx: { signed: true, recipients: items },
+        feeShannons: '0',
         async broadcast() {
-          return { ok: true, txHash: `0x${'42'.repeat(32)}` };
+          return { ok: true, txHash };
         },
       };
     },
@@ -166,7 +170,7 @@ test('cap and solvency enforcement at batch construction',
       assert.match(reason, /24h|daily/i);
     });
 
-    await t.test('an audited release reserves and pays the preserved proposal exactly once', async () => {
+    await t.test('an audited release broadcasts and confirms the preserved proposal exactly once', async () => {
       await reset(db);
       const minerId = await seedMiner(db, 'ckb1qcaptest0004', '250000000000');
       await seedIncome(db, '300000000000');
@@ -191,6 +195,21 @@ test('cap and solvency enforcement at batch construction',
           WHERE b.id = $1`, [batch.batchId])).rows[0];
       assert.deepStrictEqual(states, { batch_state: 'BROADCAST', item_state: 'BROADCAST' });
       assert.strictEqual((await balanceFor(db, minerId, [ACCOUNTS.CONFIRMED])).toString(), '0');
+      assert.strictEqual(
+        (await balanceFor(db, minerId, [ACCOUNTS.PENDING_PAYOUT])).toString(), '250000000000');
+      assert.strictEqual((await balanceFor(db, minerId, [ACCOUNTS.PAID])).toString(), '0');
+
+      await worker.confirmBatch(batch.batchId, {
+        async rpc(method) {
+          assert.strictEqual(method, 'get_transaction');
+          return { tx_status: { status: 'committed' } };
+        },
+      });
+      const confirmed = (await db.query(
+        `SELECT b.state batch_state, i.state item_state
+           FROM payout_batches b JOIN payout_items i ON i.batch_id = b.id
+          WHERE b.id = $1`, [batch.batchId])).rows[0];
+      assert.deepStrictEqual(confirmed, { batch_state: 'CONFIRMED', item_state: 'CONFIRMED' });
       assert.strictEqual((await balanceFor(db, minerId, [ACCOUNTS.PENDING_PAYOUT])).toString(), '0');
       assert.strictEqual(
         (await balanceFor(db, minerId, [ACCOUNTS.PAID])).toString(), '250000000000');

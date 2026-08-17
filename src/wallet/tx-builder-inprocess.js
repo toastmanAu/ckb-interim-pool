@@ -10,7 +10,7 @@
  */
 
 const fs = require('node:fs');
-const { buildAndSendBatchPayout } = require('./tx-builder.js');
+const { buildBatchPayout, broadcastPayout } = require('./tx-builder.js');
 
 function createCkbInProcessBuilder({
   rpcUrl,
@@ -25,15 +25,26 @@ function createCkbInProcessBuilder({
 
   return {
     async buildBatchTransfer({ items }) {
-      const { txHash } = await buildAndSendBatchPayout({
+      const built = await buildBatchPayout({
         rpcUrl,
         indexerUrl,
         privateKey: signingKey,
         feeRateShannons,
         items,
       });
-      logger.log('PAYOUT', `in-process builder: tx ${txHash} (${items.length} recipients)`);
-      return { txHash, rawTx: null, async broadcast() { return { ok: true, txHash }; } };
+      logger.log('PAYOUT', `in-process builder: signed tx ${built.txHash} (${items.length} recipients)`);
+      return {
+        ...built,
+        async broadcast() {
+          const sent = await broadcastPayout({
+            rpcUrl,
+            rawTx: built.rawTx,
+            expectedTxHash: built.txHash,
+          });
+          logger.log('PAYOUT', `in-process builder: broadcast tx ${sent.txHash}`);
+          return sent;
+        },
+      };
     },
     async buildTransfer({ toAddress, capacityShannons }) {
       return this.buildBatchTransfer({ items: [{ address: toAddress, capacityShannons }] });

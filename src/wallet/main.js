@@ -47,6 +47,7 @@ function configurePayout({
   env,
   db,
   nodeUrl,
+  rpcClient = null,
   logger = console,
   loadKeystoreFn = loadKeystore,
   createBuilderFn = createCkbInProcessBuilder,
@@ -76,6 +77,7 @@ function configurePayout({
   const payoutWorker = createWorkerFn({
     db,
     txBuilder,
+    rpcClient,
     minimumPayoutShannons: env.POOL_MIN_PAYOUT_SHANNONS || '100000000000',
     limits: {
       maxBatchShannons: env.POOL_WALLET_MAX_BATCH_SHANNONS || '200000000000',
@@ -167,6 +169,7 @@ async function main() {
     env: process.env,
     db,
     nodeUrl,
+    rpcClient,
     logger: console,
   });
 

@@ -107,11 +107,13 @@ test('key configuration validates address and wires exact payout limits without 
     POOL_WALLET_FEE_RATE_SHANNONS: '44',
   };
   const fakeWorker = { stats: { insolvency: 0 } };
+  const rpcClient = { rpc() {} };
 
   const runtime = configurePayout({
     env,
     db: { name: 'db' },
     nodeUrl: 'http://node',
+    rpcClient,
     logger: { log: (...parts) => logs.push(parts.join(' ')) },
     loadKeystoreFn(options) {
       calls.push(['keystore', options]);
@@ -141,6 +143,7 @@ test('key configuration validates address and wires exact payout limits without 
   assert.deepStrictEqual(calls[2][1].limits,
     { maxBatchShannons: '22', maxDailyShannons: '33' });
   assert.strictEqual(calls[2][1].minimumPayoutShannons, '11');
+  assert.strictEqual(calls[2][1].rpcClient, rpcClient);
   assert.match(logs.join('\n'), /ckb1expected.*armed=true/);
   assert.ok(!logs.join('\n').includes(keyBytes.toString('hex')), 'private key must never be logged');
 });

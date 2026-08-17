@@ -19,6 +19,7 @@ const { capVerdict, dailySpentShannons } = require('./caps.js');
 function createPayoutWorker({
   db,
   txBuilder,
+  rpcClient = null,
   minimumPayoutShannons = '100000000000',
   maxItemsPerBatch = 200,
   limits,
@@ -247,142 +248,203 @@ function createPayoutWorker({
     }
   }
 
-  /** Build + broadcast one tx per item (or ONE batch tx when the builder
-   *  supports it), then advance the batch state machine. */
+  /** Build one batch transaction, persist its signed evidence, then send. */
   async function processBatch(batchId) {
     const { rows } = await db.query(
       `SELECT i.id, i.miner_id, i.amount_shannons, m.payout_address
-       FROM payout_items i JOIN miners m ON m.id = i.miner_id
-       WHERE i.batch_id = $1 ORDER BY i.miner_id`,
+       FROM payout_items i
+       JOIN miners m ON m.id = i.miner_id
+       JOIN payout_batches b ON b.id = i.batch_id
+       WHERE i.batch_id = $1 AND i.state = 'RESERVED' AND b.state = 'RESERVED'
+       ORDER BY i.miner_id`,
       [batchId],
     );
     if (rows.length === 0) throw new Error(`batch ${batchId}: no items`);
-    const reservable = [];
-    for (const item of rows) {
-      const state = (await db.query(`SELECT state FROM payout_items WHERE id = $1`, [item.id])).rows[0].state;
-      if (state === 'RESERVED') reservable.push(item);
+    if (typeof txBuilder.buildBatchTransfer !== 'function') {
+      throw new Error('crash-safe payouts require buildBatchTransfer');
     }
-    if (reservable.length === 0) return;
 
-    let batchResult = null;
-    if (typeof txBuilder.buildBatchTransfer === 'function') {
-      // one signed transaction for the whole batch (spec 04 §11 batching)
-      batchResult = await txBuilder.buildBatchTransfer({
-        items: reservable.map(i => ({ address: i.payout_address, capacityShannons: i.amount_shannons })),
-      });
-      const broadcast = await batchResult.broadcast();
-      await postEntriesForBatch(batchId, reservable, broadcast.txHash);
-      logger.log('PAYOUT', `batch ${batchId.slice(0, 8)} → ${reservable.length} recipients in ONE tx ${broadcast.txHash}`);
-    } else {
-      for (const item of reservable) {
-        const built = await txBuilder.buildTransfer({
-          toAddress: item.payout_address,
-          capacityShannons: item.amount_shannons,
-        });
-        const broadcast = await built.broadcast();
-        await postEntriesForBatch(batchId, [item], broadcast.txHash);
-        logger.log('PAYOUT', `batch ${batchId.slice(0, 8)} → ${item.payout_address.slice(0, 12)}… ${item.amount_shannons} shannons tx=${broadcast.txHash}`);
-      }
+    const built = await txBuilder.buildBatchTransfer({
+      items: rows.map(i => ({ address: i.payout_address, capacityShannons: i.amount_shannons })),
+    });
+    if (!built?.txHash || !built.rawTx || typeof built.broadcast !== 'function') {
+      throw new Error('builder must return txHash, signed rawTx, and broadcast()');
     }
-    await db.query(
-      `UPDATE payout_batches SET state = 'BROADCAST', broadcast_at = now(), tx_hash = $2 WHERE id = $1 AND state = 'RESERVED'`,
-      [batchId, batchResult ? null : null],
+    const saved = await db.query(
+      `UPDATE payout_batches
+          SET state = 'BUILT', built_at = now(), tx_hash = $2,
+              raw_tx_or_ref = $3, fee_shannons = $4
+        WHERE id = $1 AND state = 'RESERVED'`,
+      [batchId, built.txHash, JSON.stringify(built.rawTx), built.feeShannons ?? null],
     );
+    if (saved.rowCount !== 1) throw new Error(`batch ${batchId}: state changed before build evidence was saved`);
+
+    const broadcast = await built.broadcast();
+    if (!broadcast?.txHash || broadcast.txHash !== built.txHash) {
+      throw new Error(`batch ${batchId}: broadcast transaction hash mismatch`);
+    }
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(
+        `UPDATE payout_items SET state = 'BROADCAST'
+          WHERE batch_id = $1 AND state = 'RESERVED'`, [batchId]);
+      await client.query(
+        `UPDATE payout_batches SET state = 'BROADCAST', broadcast_at = now()
+          WHERE id = $1 AND state = 'BUILT'`, [batchId]);
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+    logger.log('PAYOUT', `batch ${String(batchId).slice(0, 8)} → ${rows.length} recipients in ONE tx ${broadcast.txHash}`);
+    return broadcast.txHash;
   }
 
-  /** Mark items BROADCAST + post the PAID ledger transitions (idempotent). */
-  async function postEntriesForBatch(batchId, items, txHash) {
-    for (const item of items) {
-      await db.query(
-        `UPDATE payout_items SET state = 'BROADCAST' WHERE id = $1 AND state = 'RESERVED'`,
-        [item.id],
-      );
-      await postEntry(db, {
-        accountType: ACCOUNTS.PAID,
-        minerId: item.miner_id,
-        amountShannons: item.amount_shannons,
-        referenceType: 'payout',
-        referenceId: batchId,
-        idempotencyKey: `payout:paid:${batchId}:${item.miner_id}`,
-        metadata: { txHash },
-      });
-      await postEntry(db, {
-        accountType: ACCOUNTS.PENDING_PAYOUT,
-        minerId: item.miner_id,
-        amountShannons: (-BigInt(item.amount_shannons)).toString(),
-        referenceType: 'payout',
-        referenceId: batchId,
-        idempotencyKey: `payout:paid:${batchId}:${item.miner_id}:pending`,
-      });
+  async function transactionFee(node, tx) {
+    if (!tx?.inputs || !tx?.outputs) return null;
+    let inputTotal = 0n;
+    for (const input of tx.inputs) {
+      const previous = input?.previous_output;
+      if (!previous?.tx_hash) return null;
+      const parent = await node.rpc('get_transaction', [previous.tx_hash]);
+      const index = Number.parseInt(previous.index, 16);
+      const capacity = parent?.transaction?.outputs?.[index]?.capacity;
+      if (capacity == null) return null;
+      inputTotal += BigInt(capacity);
     }
+    const outputTotal = tx.outputs.reduce((sum, output) => sum + BigInt(output.capacity), 0n);
+    if (inputTotal < outputTotal) throw new Error('payout transaction outputs exceed inputs');
+    return inputTotal - outputTotal;
   }
 
-  /** Confirm broadcast txs on the node (poll get_transaction until committed). */
-  async function confirmBatch(batchId, rpcClient) {
-    const { rows } = await db.query(
-      `SELECT id, miner_id FROM payout_items WHERE batch_id = $1 AND state = 'BROADCAST'`,
-      [batchId],
-    );
-    for (const item of rows) {
-      // tx hash is in the PAID ledger metadata
-      const meta = (await db.query(
-        `SELECT metadata FROM ledger_entries WHERE idempotency_key = $1`,
-        [`payout:paid:${batchId}:${item.miner_id}`],
-      )).rows[0]?.metadata;
-      const txHash = meta?.txHash;
-      if (!txHash) continue;
-      let status = null;
+  /** Only a committed transaction consumes the reservation and becomes PAID. */
+  async function confirmBatch(batchId, node) {
+    const batch = (await db.query(
+      `SELECT id::text, state, tx_hash, fee_shannons::text
+         FROM payout_batches WHERE id = $1`, [batchId])).rows[0];
+    if (!batch || batch.state === 'CONFIRMED') return batch?.state === 'CONFIRMED';
+    if (!['BUILT', 'BROADCAST'].includes(batch.state) || !batch.tx_hash) return false;
+
+    let result;
+    try {
+      result = await node.rpc('get_transaction', [batch.tx_hash]);
+    } catch {
+      return false;
+    }
+    const status = result?.tx_status?.status;
+    if (status === 'pending' || status === 'proposed') {
+      const client = await db.pool.connect();
       try {
-        const tx = await rpcClient.rpc('get_transaction', [txHash]);
-        status = tx?.tx_status?.status;
-      } catch { /* not found yet */ }
-      if (status === 'committed' || status === 'proposed') {
-        await db.query(`UPDATE payout_items SET state = 'CONFIRMED' WHERE id = $1`, [item.id]);
+        await client.query('BEGIN');
+        await client.query(
+          `UPDATE payout_items SET state = 'BROADCAST'
+            WHERE batch_id = $1 AND state = 'RESERVED'`, [batchId]);
+        await client.query(
+          `UPDATE payout_batches SET state = 'BROADCAST', broadcast_at = COALESCE(broadcast_at, now())
+            WHERE id = $1 AND state IN ('BUILT', 'BROADCAST')`, [batchId]);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
       }
+      return false;
     }
-    const remaining = (await db.query(
-      `SELECT count(*)::int c FROM payout_items WHERE batch_id = $1 AND state != 'CONFIRMED'`,
-      [batchId],
-    )).rows[0].c;
-    if (remaining === 0) {
-      await db.query(`UPDATE payout_batches SET state = 'CONFIRMED', confirmed_at = now() WHERE id = $1`, [batchId]);
+    if (status !== 'committed') return false;
+
+    const derivedFee = await transactionFee(node, result.transaction);
+    const fee = derivedFee ?? (batch.fee_shannons == null ? null : BigInt(batch.fee_shannons));
+    if (fee == null) throw new Error(`batch ${batchId}: committed transaction fee cannot be determined`);
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const locked = (await client.query(
+        `SELECT state FROM payout_batches WHERE id = $1 FOR UPDATE`, [batchId])).rows[0];
+      if (locked?.state === 'CONFIRMED') {
+        await client.query('COMMIT');
+        return true;
+      }
+      if (!locked || !['BUILT', 'BROADCAST'].includes(locked.state)) {
+        await client.query('ROLLBACK');
+        return false;
+      }
+      const { rows: items } = await client.query(
+        `SELECT miner_id::text, amount_shannons::text FROM payout_items WHERE batch_id = $1`,
+        [batchId]);
+      for (const item of items) {
+        await postEntry(client, {
+          accountType: ACCOUNTS.PAID,
+          minerId: item.miner_id,
+          amountShannons: item.amount_shannons,
+          referenceType: 'payout',
+          referenceId: batch.id,
+          idempotencyKey: `payout:paid:${batch.id}:${item.miner_id}`,
+          metadata: { txHash: batch.tx_hash },
+        });
+        await postEntry(client, {
+          accountType: ACCOUNTS.PENDING_PAYOUT,
+          minerId: item.miner_id,
+          amountShannons: (-BigInt(item.amount_shannons)).toString(),
+          referenceType: 'payout',
+          referenceId: batch.id,
+          idempotencyKey: `payout:paid:${batch.id}:${item.miner_id}:pending`,
+        });
+      }
+      await postEntry(client, {
+        accountType: ACCOUNTS.TX_FEE,
+        amountShannons: fee.toString(),
+        referenceType: 'payout',
+        referenceId: batch.id,
+        idempotencyKey: `payout:fee:${batch.id}`,
+        metadata: { txHash: batch.tx_hash },
+      });
+      await client.query(
+        `UPDATE payout_items SET state = 'CONFIRMED' WHERE batch_id = $1`, [batchId]);
+      await client.query(
+        `UPDATE payout_batches
+            SET state = 'CONFIRMED', confirmed_at = now(), fee_shannons = $2
+          WHERE id = $1`, [batchId, fee.toString()]);
+      await client.query('COMMIT');
+      return true;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
-  /** Crash recovery: find BROADCAST items whose tx already exists on-chain. */
-  async function recoverPendingBatches(rpcClient) {
+  /** Reconcile durable hashes conservatively; never rebuild unresolved work. */
+  async function recoverPendingBatches(node) {
     const { rows } = await db.query(
-      `SELECT DISTINCT batch_id FROM payout_items WHERE state IN ('RESERVED','BROADCAST')`,
+      `SELECT id FROM payout_batches
+        WHERE state IN ('BUILT', 'BROADCAST') AND tx_hash IS NOT NULL
+        ORDER BY created_at`,
     );
-    for (const { batch_id: raw } of rows) {
-      const batch_id = raw.replace(/-/g, '');
-      const { rows: items } = await db.query(
-        `SELECT id, miner_id, state FROM payout_items WHERE batch_id = $1 AND state = 'BROADCAST'`,
-        [batch_id],
-      );
-      for (const item of items) {
-        const meta = (await db.query(
-          `SELECT metadata FROM ledger_entries WHERE idempotency_key = $1`,
-          [`payout:paid:${batch_id}:${item.miner_id}`],
-        )).rows[0]?.metadata;
-        if (!meta?.txHash) continue;
-        try {
-          const tx = await rpcClient.rpc('get_transaction', [meta.txHash]);
-          if (tx?.tx_status?.status) {
-            // already broadcast — do not re-send
-            await db.query(`UPDATE payout_items SET state = 'BROADCAST' WHERE id = $1`, [item.id]);
-          }
-        } catch { /* not on-chain — safe to re-broadcast from BUILT state */ }
-      }
-      await confirmBatch(batch_id, rpcClient);
+    for (const row of rows) {
+      await confirmBatch(String(row.id), node);
     }
   }
 
   /** One full sweep. Returns the created batch or null. */
-  async function runOnce() {
+  async function runOnce(rpcOverride = null) {
     const [acquired] = (await db.query('SELECT pg_try_advisory_lock(727_001) AS ok')).rows;
     if (!acquired.ok) { logger.log('PAYOUT', 'another worker holds the lock'); return null; }
     try {
+      const node = rpcOverride || rpcClient;
+      if (node) await recoverPendingBatches(node);
+      const unresolved = await db.query(
+        `SELECT 1 FROM payout_batches WHERE state IN ('BUILT', 'BROADCAST') LIMIT 1`);
+      if (unresolved.rowCount > 0) {
+        logger.log('PAYOUT', 'unresolved signed/broadcast batch blocks new payout work');
+        return null;
+      }
       // resume any RESERVED batch stuck between create and process
       // (crash recovery — spec 04 §12)
       const stuck = await db.query(`SELECT id FROM payout_batches WHERE state = 'RESERVED'`);
@@ -390,6 +452,7 @@ function createPayoutWorker({
         logger.log('PAYOUT', `resuming stuck batch ${String(b.id).slice(0, 8)}`);
         if (await reserveReleasedBatch(b.id)) await processBatch(b.id);
       }
+      if (stuck.rowCount > 0) return null;
       const held = await db.query(`SELECT 1 FROM payout_batches WHERE state = 'HELD' LIMIT 1`);
       if (held.rowCount > 0) return null;
       const miners = await eligibleMiners();

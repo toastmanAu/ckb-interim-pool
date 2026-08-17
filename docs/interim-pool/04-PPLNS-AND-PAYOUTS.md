@@ -159,9 +159,9 @@ Periodic payout worker:
 4. builds CKB transaction using spendable pool cells;
 5. estimates/includes network fee;
 6. dry-runs/validates where available;
-7. signs;
-8. broadcasts;
-9. stores tx hash;
+7. signs and computes the raw transaction hash;
+8. durably stores the signed transaction, hash, and fee in `BUILT`;
+9. broadcasts and advances to `BROADCAST`;
 10. monitors confirmation;
 11. finalizes ledger state;
 12. on failure, retries safely or releases reservation according to state.
@@ -176,7 +176,10 @@ miner_address + payout_batch_id + reserved_ledger_range
 
 Never select already-reserved ledger credits into a second batch.
 
-If a transaction is broadcast and the process crashes before DB update, recovery must search the saved signed tx/hash before constructing a replacement.
+If a process crashes during broadcast, recovery must reconcile the saved
+signed transaction/hash against the node before constructing any replacement.
+An absent result is missing evidence, not proof that the transaction was not
+accepted. Only a committed transaction finalizes `miner_paid` and the fee.
 
 ## 13. Wallet separation
 
