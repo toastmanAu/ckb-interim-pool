@@ -352,6 +352,12 @@ session record for the full timeline and evidence.
   only while armed. `wallet_sweeps` persists `BUILT` evidence before send and
   reconciles it against the node before any replacement; concurrent first use
   can trust exactly one configured cold address.
+- **Real-node payout gate**: `npm run test:e2e` requires the local CKB dev
+  chain, pool key, and destructive PostgreSQL fixture. It signs and broadcasts
+  through the production builder, mines to `committed`, verifies the exact
+  recipient output, then confirms `CONFIRMED → PENDING_PAYOUT → PAID`, fee
+  booking, and block-ledger conservation. Missing prerequisites fail the gate
+  instead of reporting a misleading skipped pass.
 - `POOL_MATURITY_EPOCHS` env for the block-service (dev chain uses 0).
 - The dev drill now flushes the mempool first (mines ~8s) so reruns never
   double-spend pending cells; `test/payout-tx.test.js` mines blocks

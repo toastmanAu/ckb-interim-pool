@@ -81,6 +81,12 @@ Sanity: `curl localhost:9101/health` (ingest), `curl localhost:8080/api/v1/pool`
 (api), `curl localhost:8082/health` (edge), `curl localhost:9102/health`
 (wallet — before arming, expect `signing:true` and `armed:false`).
 
+Before a wallet release, run `deploy/ckb-dev-test.sh` followed by
+`npm run test:e2e`. This command deliberately fails if the dev node, its pool
+key, or the destructive test database is missing; success means a real node
+committed the signed payout and the recipient output and ledger settlement
+were both verified.
+
 ## 3. Daily checks
 
 - `poolctl ledger verify` — conservation across every allocated block.
