@@ -8,7 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/ckb-merkle.test.js test/ckb-target.test.js test/ckb-template.test.js test/block-hash-regression.test.js test/cellbase-witness.test.js test/build-info.test.js test/job-registry.test.js test/miner-family.test.js test/username.test.js test/events.test.js test/edge.integration.test.js test/payout-tx.test.js test/payout-cell-selection.test.js test/payout-output-plan.test.js test/reconciler.test.js test/wallet-service.test.js test/wallet-arming.test.js test/treasury.test.js test/keystore.test.js test/cells.test.js test/caps.test.js test/sweep.test.js",
+    "test": "node --test test/ckb-merkle.test.js test/ckb-target.test.js test/ckb-template.test.js test/block-hash-regression.test.js test/cellbase-witness.test.js test/build-info.test.js test/job-registry.test.js test/miner-family.test.js test/username.test.js test/events.test.js test/edge.integration.test.js test/nats-safety.test.js test/payout-tx.test.js test/payout-cell-selection.test.js test/payout-output-plan.test.js test/reconciler.test.js test/wallet-service.test.js test/wallet-arming.test.js test/treasury.test.js test/keystore.test.js test/cells.test.js test/caps.test.js test/sweep.test.js",
     "test:nats": "node --test --test-force-exit test/nats-pipeline.test.js",
     "test:e2e": "POOL_REQUIRE_DEV_CHAIN=1 node --test --test-concurrency=1 --test-force-exit test/wallet-e2e-devchain.test.js",
     "test:all": "npm run test && npm run test:nats",

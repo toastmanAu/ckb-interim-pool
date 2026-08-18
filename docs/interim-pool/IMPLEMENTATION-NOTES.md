@@ -155,7 +155,7 @@ the NATS suite runs with `--test-force-exit` (separate npm script).
 | Suite | Command | Result |
 |---|---|---|
 | unit (mining/stratum/events/edge/pplns/username) | `npm test` | 99/99 |
-| NATS pipeline gate | `npm run test:nats` (needs `deploy/nats-test.sh`) | 1/1 |
+| NATS pipeline gate | `POOL_NATS_ALLOW_OUTAGE_TEST=1 npm run test:nats` (needs a dedicated `deploy/nats-test.sh` instance; refuses shared/live streams) | 1/1 |
 | DB integration (ingest/tracker/allocator/payout/api) | `node --test --test-force-exit test/*.integration.test.js test/block-tracker.test.js test/allocator.test.js test/payout.test.js` (needs `deploy/pg-test.sh`) | 5/5 |
 
 ## Live-node verification (2026-08-12, mainnet node at 192.168.68.105:8114)

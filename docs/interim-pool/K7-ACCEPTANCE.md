@@ -13,7 +13,9 @@ curl -s --max-time 4 http://192.168.68.105:8114 -X POST -H 'Content-Type: applic
   -d '{"id":1,"jsonrpc":"2.0","method":"get_tip_header","params":[]}' | head -c 200
 
 # 2. full test suite
-npm test && npm run test:nats
+npm test
+# Destructive outage/restart test: point this only at a dedicated test NATS.
+POOL_NATS_ALLOW_OUTAGE_TEST=1 npm run test:nats
 
 # 3. start the acceptance edge
 deploy/k7-session.sh deploy/edges/k7-acceptance.json   # run in a terminal

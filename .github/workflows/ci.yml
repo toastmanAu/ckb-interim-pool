@@ -51,5 +51,6 @@ jobs:
       - run: npm run test:nats
         env:
           POOL_NATS_CONTAINER: pool-nats
+          POOL_NATS_ALLOW_OUTAGE_TEST: 1
       - run: docker rm -f pool-nats
         if: always()

@@ -24,10 +24,12 @@ const { connect, StringCodec, RetentionPolicy } = require('nats');
 const { createNatsTransport } = require('../src/events/nats-transport.js');
 const { createEdgeSink } = require('../src/events/edge-sink.js');
 const { uuidv7 } = require('../src/common/ids.js');
+const { assertIsolatedTestServer } = require('./helpers/nats-safety.js');
 
 const NATS_URL = process.env.POOL_NATS_URL || 'nats://127.0.0.1:4223';
 const NATS_CONTAINER = process.env.POOL_NATS_CONTAINER || 'pool-nats-test';
 const STREAM = 'POOL_V1_TEST';
+const SUBJECTS = ['pool.v1.test.edge.>'];
 
 const BOOT_A = uuidv7();
 const BOOT_B = uuidv7();
@@ -90,24 +92,31 @@ test('bus outage → spool → replay → exactly-once', { timeout: 90000 }, asy
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pool-nats-'));
 
   console.error("P1 start");
-  // clean slate: drop any streams left by previous runs (drills, rehearsals)
+  // This test restarts its NATS server. Refuse a shared/live server, then
+  // remove only the stream this test owns. Never delete an arbitrary stream.
   {
     const nc = await connect({ servers: NATS_URL, timeout: 3000 });
     const jsm = await nc.jetstreamManager();
+    const streams = [];
     const it = await jsm.streams.list();
-    for await (const s of it) {
-      try { await jsm.streams.delete(s.config.name); } catch {}
-    }
+    for await (const s of it) streams.push(s);
+    assertIsolatedTestServer(streams, {
+      stream: STREAM,
+      subjects: SUBJECTS,
+      allowOutage: process.env.POOL_NATS_ALLOW_OUTAGE_TEST,
+    });
+    try { await jsm.streams.delete(STREAM); } catch {}
     await nc.close();
   }
 
   const config = {
     bootId: BOOT_A,
     spool: { dir, maxBytes: 64 * 1024 * 1024, highWaterBytes: 32 * 1024 * 1024, syncIntervalMs: 50 },
+    events: { subjectPrefix: 'pool.v1.test.edge' },
   };
 
   // ── phase 1: NATS up, events flow ────────────────────────────────────────
-  const transport = await createNatsTransport({ servers: [NATS_URL], stream: STREAM, logger: { log: () => {} } }).start();
+  const transport = await createNatsTransport({ servers: [NATS_URL], stream: STREAM, subjects: SUBJECTS, logger: { log: () => {} } }).start();
   const sink = createEdgeSink({ config, transport, logger: { log: () => {} } });
   await sink.replay();
 
@@ -145,7 +154,7 @@ test('bus outage → spool → replay → exactly-once', { timeout: 90000 }, asy
   execSync(`docker start ${NATS_CONTAINER} >/dev/null 2>&1`);
   await new Promise(r => setTimeout(r, 2000));
 
-  const transport2 = await createNatsTransport({ servers: [NATS_URL], stream: STREAM, logger: { log: () => {} } }).start();
+  const transport2 = await createNatsTransport({ servers: [NATS_URL], stream: STREAM, subjects: SUBJECTS, logger: { log: () => {} } }).start();
   const sink2 = createEdgeSink({ config: { ...config, bootId: BOOT_B }, transport: transport2, logger: { log: () => {} } });
   await sink2.replay();     // replays wal-BOOT_A.log (4..8) — publisher drains all
   await new Promise(r => setTimeout(r, 2500));
@@ -159,4 +168,3 @@ test('bus outage → spool → replay → exactly-once', { timeout: 90000 }, asy
   console.error("P6 done");
   assert.strictEqual(seen.size, 8, "8 distinct events, no loss, no duplicates.");
 });
-
