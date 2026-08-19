@@ -375,3 +375,55 @@ session record for the full timeline and evidence.
 - Multi-region drills (two edges, central outage, spool replay together).
 - 24h+ soak, restore/replay drills, secrets isolation, alerts, runbook
   (spec 07 §11 launch gates).
+
+## First armed mainnet payout (2026-08-19) — milestone
+
+The wallet's first autonomous mainnet payout was broadcast, committed and
+ledger-settled end-to-end: batch `01a0184b-…1dda82` (5116.84447166 CKB to
+the miner, 0.00383 CKB fee booked to the pool), tx
+`0x8fadc1789f042aa374f0a220f9b2257f65009a6eaa735ef89e1cc874450a91bd`,
+`CONFIRMED → PENDING_PAYOUT → PAID` posted once, conservation verified
+across all 7 allocated blocks, owed remaining 0 shannons.
+
+Deployment path that reached it (recorded for the runbook's arming section):
+
+1. **Dedicated treasury key** (`/etc/wyltek-pool/payout.privkey`, 0600,
+   `pool-wallet:pool-wallet`, generated on-host, never printed). The
+   ckbnode `block_assembler` was repointed to the derived lock
+   `0x2b29df37…` and the change verified in the live template's cellbase
+   witness — the *output* lock of any template still pays H−11's declared
+   lock (normal chain behaviour), so the witness is the thing to check.
+2. **Obsolete solo-proxy stopped and disabled** on ckbnode: it had zero
+   connected miners but kept polling templates with the pre-pool solo lock;
+   any node client that requests a template also resets the assembler's
+   pending lock — the same mechanism that misrouted the Aug-14 blocks.
+3. **Wallet runs as a hardened system unit** (`/etc/systemd/system/
+   pool-wallet.service` + host drop-in) under `User=pool-wallet`, code at
+   `/opt/wyltek-pool`, replacing the transient user unit. One documented
+   deviation: `MemoryDenyWriteExecute=no` — Ubuntu's node v22.22.2 V8
+   baseline compiler allocates RWX pages and TRAPs under MDWE.
+4. **Bootstrap funding is by transfer**: the treasury was funded 3500 +
+   2500 CKB from the operator's wallet before mining any pool blocks.
+5. **Arming order that worked**: `test:e2e` green → `poolctl wallet doctor`
+   clean → `POOL_WALLET_ARMED=1` via drop-in → first batch parked HELD
+   (over the 2000 CKB per-batch cap, by design) → released by the operator
+   (`released_by=phill`) → next tick built, signed and broadcast.
+
+Three defects found only against the real node, fixed in `3565bc3`
+("wallet: harden the first armed mainnet tick"):
+
+- `get_cells` packed `order`/`limit` into the search key — accepted by
+  mocks, rejected by ckb 0.209 ("Missing required parameter `order`").
+  Canonical `(search_key, order, limit, after?)` params now.
+- `snapshotTreasuryLocks` wrote rows only for locks with receipts, so a
+  transfer-funded treasury never got a measured spendable snapshot and
+  every sweep pass failed closed ("no measured spendable treasury
+  snapshot"). The keystore lock is always measured now.
+- The tx-builder's 15s RPC timeout could never cover this node's 77s
+  `get_block_by_number("0x0")` response, and it re-fetched the immutable
+  2.4MB genesis on every build. Timeout is 180s and dep resolution is
+  cached per node.
+
+Remaining launch gates: real testnet block-to-payout lifecycle, Phase 10
+block-state alerts exporter, multi-region deployment, 24h+ soak,
+Goldshell/NerdMiner paths, restore/replay drills.
