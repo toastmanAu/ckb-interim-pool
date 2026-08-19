@@ -49,7 +49,7 @@ function rpc(url, method, params) {
     const req = http.request({
       host: u.hostname, port: u.port || 8114, method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
-      timeout: 15000,
+      timeout: 180000,
     }, res => {
       let d = '';
       res.on('data', c => { d += c; });
@@ -112,8 +112,21 @@ function decodeRecipientAddress(address) {
  * type hash and whose data is an outpoint vector. Dev chain: the same type
  * hash sits on the CODE cell (TYPE_ID script) — use code deps for the code
  * cell + the secp data cell instead (the dev genesis has no dep groups).
+ *
+ * Cached per node: the genesis is immutable, and on slow nodes (Orange Pi
+ * class hardware) the 2.4MB `get_block_by_number("0x0")` response can take
+ * over a minute — every payout build re-fetching it is what timed out the
+ * first armed tick on mainnet (2026-08-19).
  */
+const secpDepsCache = new Map();
 async function resolveSecpDeps(nodeUrl) {
+  if (secpDepsCache.has(nodeUrl)) return secpDepsCache.get(nodeUrl);
+  const deps = await resolveSecpDepsUncached(nodeUrl);
+  secpDepsCache.set(nodeUrl, deps);
+  return deps;
+}
+
+async function resolveSecpDepsUncached(nodeUrl) {
   const genesis = await rpc(nodeUrl, 'get_block_by_number', ['0x0']);
   const genesisTxHash = genesis.transactions[0].hash;
   const outs = genesis.transactions[0].outputs;

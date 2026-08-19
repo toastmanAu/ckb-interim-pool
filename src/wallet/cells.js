@@ -83,16 +83,18 @@ async function collectLiveCells({ indexerUrl, nodeUrl = indexerUrl, lock, rpc })
   const cells = [];
   let after = null;
   for (let page = 0; page < 200; page++) {
-    const query = {
+    // Canonical ckb-indexer RPC: get_cells(search_key, order, limit, after?).
+    // order/limit are separate params — packing them into the search key is
+    // rejected by real indexer nodes (ckb 0.209: "Missing required parameter
+    // `order`") and only ever passed against mocks.
+    const searchKey = {
       script: { code_hash: lock.code_hash, hash_type: lock.hash_type, args: lock.args },
       script_type: 'lock',
-      filter: null,
       with_data: false,
-      order: 'asc',
-      limit: '0x64',
     };
-    if (after) query.after = after;
-    const response = await rpc(indexerUrl, 'get_cells', [query]);
+    const params = [searchKey, 'asc', '0x64'];
+    if (after) params.push(after);
+    const response = await rpc(indexerUrl, 'get_cells', params);
     const objects = response?.objects;
     if (!Array.isArray(objects)) throw new Error('indexer get_cells returned no objects array');
     cells.push(...objects);

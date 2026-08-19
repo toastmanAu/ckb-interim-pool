@@ -131,4 +131,47 @@ test('treasury snapshots', { timeout: 60000, skip: !dbReady }, async t => {
       'a lock the loaded key does not control must never be reported as spendable');
     assert.strictEqual(historical.cell_count, null);
   });
+
+  await t.test('measures the keystore lock even when it has no receipts (transfer-funded bootstrap)', async () => {
+    // A treasury funded by TRANSFER holds real, spendable cells but has mined
+    // nothing: no treasury_receipts rows name its lock. The snapshot must
+    // still measure it every tick, or the sweep pass refuses forever.
+    await db.query('TRUNCATE treasury_snapshots, treasury_receipts, blocks, ledger_entries CASCADE');
+    await seedReceipt(db, { lockArgs: '0x' + 'bb'.repeat(20), amount: '400', confirmed: true, height: 30 });
+    const lockArgs = '0x' + 'cc'.repeat(20);   // the keystore lock — NOT in receipts
+    const lock = { code_hash: '0x' + '11'.repeat(32), hash_type: 'type', args: lockArgs };
+
+    const rpc = async (url, method, params) => {
+      if (method === 'get_cells') {
+        if (params[0].script.args !== lockArgs) {
+          throw new Error(`collected for the wrong lock ${params[0].script.args}`);
+        }
+        return {
+          objects: [
+            {
+              output: { capacity: '0x174876e800' },    // exactly 1000 CKB
+              block_number: '0x64', tx_index: '0x1',  // tx_index 1: NOT a cellbase — no maturity
+              out_point: { tx_hash: '0x' + '03'.repeat(32), index: '0x0' },
+            },
+          ],
+          last_cursor: '0x',
+        };
+      }
+      if (method === 'get_header_by_number') return { epoch: packedEpoch(10) };
+      throw new Error(`unexpected RPC method ${method}`);
+    };
+
+    await snapshotTreasuryLocks(db, {
+      indexerUrl: 'http://indexer', rpc, tipEpochHex: packedEpoch(18), lock,
+    });
+
+    const row = (await db.query(
+      'SELECT * FROM treasury_snapshots WHERE lock_args = $1', [lockArgs])).rows[0];
+    assert.ok(row, 'the transfer-funded keystore lock must get a snapshot row');
+    assert.strictEqual(row.total_shannons, '0',
+      'zero confirmed receipts is a measured fact: received-via-mining is 0');
+    assert.strictEqual(row.spendable_shannons, '100000000000',
+      'a non-cellbase transfer cell is spendable immediately');
+    assert.strictEqual(row.cell_count, 1);
+  });
 });

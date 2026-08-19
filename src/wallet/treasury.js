@@ -94,6 +94,16 @@ async function snapshotTreasuryLocks(db, measurement = {}) {
     `SELECT lock_args, sum(amount_shannons) AS received
        FROM treasury_receipts WHERE voided_at IS NULL AND confirmed_at IS NOT NULL
       GROUP BY lock_args`);
+  // A bootstrapped treasury is funded by TRANSFER before it has mined
+  // anything: no receipts, so no row in the query above. The keystore lock
+  // must still be measured every tick, or the sweep pass fails forever on
+  // "no measured spendable treasury snapshot" — the money is real and
+  // spendable, just not mining income.
+  if (canMeasure && !locks.rows.some(l => l.lock_args === lock.args)) {
+    // total_shannons is NOT NULL: a lock with zero confirmed receipts has,
+    // as a measured fact of the database, received 0 via mining.
+    locks.rows.push({ lock_args: lock.args, received: '0' });
+  }
   const owed = (await db.query(
     `SELECT COALESCE(sum(amount_shannons), 0) AS owed FROM ledger_entries
       WHERE account_type = $1`, [ACCOUNTS.CONFIRMED])).rows[0].owed;

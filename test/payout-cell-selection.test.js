@@ -80,5 +80,5 @@ test('the indexer collection path applies maturity and oldest-first selection', 
     '0x' + '20'.repeat(32),
   ]);
   const indexCall = calls.find(call => call.method === 'get_cells');
-  assert.strictEqual(indexCall.params[0].order, 'asc');
+  assert.strictEqual(indexCall.params[1], 'asc');
 });

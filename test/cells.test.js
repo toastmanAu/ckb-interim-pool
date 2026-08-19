@@ -115,9 +115,11 @@ test('collects ascending indexer pages and hydrates each unique block epoch', as
     [packedEpoch(10), packedEpoch(10), packedEpoch(11, 1)]);
   const pageCalls = calls.filter(call => call.method === 'get_cells');
   assert.strictEqual(pageCalls.length, 2);
-  assert.strictEqual(pageCalls[0].params[0].order, 'asc');
-  assert.ok(!Object.hasOwn(pageCalls[0].params[0], 'after'));
-  assert.strictEqual(pageCalls[1].params[0].after, '0xnext');
+  assert.strictEqual(pageCalls[0].params[1], 'asc',
+    'order is a separate param — real indexer nodes reject it inside the search key');
+  assert.strictEqual(pageCalls.length && pageCalls[0].params.length, 3,
+    'no cursor on the first page');
+  assert.strictEqual(pageCalls[1].params[3], '0xnext');
   assert.strictEqual(calls.filter(call => call.method === 'get_header_by_number').length, 2,
     'cells in the same block share one header lookup');
 });
