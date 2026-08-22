@@ -37,6 +37,21 @@ async function readReceiptCounts(db) {
   return rows[0];
 }
 
+/**
+ * A whole-day policy period from the environment. An unparseable value is a
+ * configuration error, not a reason to fall back to NaN — every comparison
+ * against NaN is false, which would silently disable the policy it configures.
+ */
+function policyDays(env, name, fallback) {
+  const raw = env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const days = Number(raw);
+  if (!Number.isFinite(days) || days < 0) {
+    throw new Error(`${name} must be a non-negative number of days, got "${raw}"`);
+  }
+  return days;
+}
+
 /** Only the exact opt-in value arms broadcast; dry-run always wins. */
 function isArmed(env) {
   if (env.POOL_WALLET_DRY_RUN === '1') return false;
@@ -81,6 +96,10 @@ function configurePayout({
     txBuilder,
     rpcClient,
     minimumPayoutShannons: env.POOL_MIN_PAYOUT_SHANNONS || '100000000000',
+    dustInactiveDays: policyDays(env, 'POOL_DUST_INACTIVE_DAYS', 3),
+    // 0 = never forfeit. Moving a miner's balance to the pool is a policy act
+    // that must be switched on in the unit file, never inherited from a default.
+    forfeitAfterDays: policyDays(env, 'POOL_DUST_FORFEIT_DAYS', 0),
     limits: {
       maxBatchShannons: env.POOL_WALLET_MAX_BATCH_SHANNONS || '200000000000',
       maxDailyShannons: env.POOL_WALLET_MAX_DAILY_SHANNONS || '1000000000000',
@@ -158,6 +177,8 @@ function buildMetrics(m, counts = {}) {
     `pool_wallet_payout_errors_total ${m.payout_errors || 0}`,
     `pool_wallet_sweep_errors_total ${m.sweep_errors || 0}`,
     `pool_wallet_insolvency_total ${m.insolvency || 0}`,
+    '# TYPE pool_wallet_forfeited_shannons_total counter',
+    `pool_wallet_forfeited_shannons_total ${m.forfeited_shannons || 0}`,
     '# HELP pool_wallet_receipts_total treasury receipts recorded, any state (read from the database, not accumulated in process)',
     '# TYPE pool_wallet_receipts_total gauge',
     `pool_wallet_receipts_total ${counts.total || 0}`,
@@ -200,6 +221,7 @@ async function main() {
     payout_errors: 0,
     sweep_errors: 0,
     insolvency: 0,
+    forfeited_shannons: 0,
   };
   const reconciler = createReconciler({
     db, rpcClient,
@@ -256,7 +278,10 @@ async function main() {
     catch (e) { metrics.rpc_errors++; console.log('WALLET', `tick failed: ${e.message}`); }
 
     await runPayoutPass({ payoutWorker, armed, metrics, logger: console });
-    if (payoutWorker) metrics.insolvency = payoutWorker.stats.insolvency;
+    if (payoutWorker) {
+      metrics.insolvency = payoutWorker.stats.insolvency;
+      metrics.forfeited_shannons = payoutWorker.stats.forfeited_shannons.toString();
+    }
 
     let measuredForSweep = false;
     try {
@@ -304,6 +329,7 @@ module.exports = {
   HELP_BUILD,
   readReceiptCounts,
   isArmed,
+  policyDays,
   configurePayout,
   runPayoutPass,
   runSweepPass,

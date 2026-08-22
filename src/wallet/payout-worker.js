@@ -15,6 +15,7 @@
 const { uuidv7 } = require('../common/ids.js');
 const { postEntry, balanceFor, ACCOUNTS } = require('../accounting/ledger.js');
 const { capVerdict, dailySpentShannons } = require('./caps.js');
+const { payableFloorForAddress, classifyBalance } = require('./dust.js');
 
 function createPayoutWorker({
   db,
@@ -23,14 +24,32 @@ function createPayoutWorker({
   minimumPayoutShannons = '100000000000',
   maxItemsPerBatch = 200,
   limits,
+  // A miner who stops earning never reaches the payout minimum again, so their
+  // remaining balance is stranded. Sweep it once they have taken no credit for
+  // this many days. The clock runs on credits rather than shares because
+  // in-window blocks keep settling for hours after a rig stops.
+  dustInactiveDays = 3,
+  // Balances below the recipient's own cell floor can never be paid at all.
+  // 0 disables forfeiture entirely: moving miner funds to the pool is a
+  // deliberate policy act, never a default of a fresh deploy.
+  forfeitAfterDays = 0,
   logger = console,
 }) {
   const minimum = BigInt(minimumPayoutShannons);
-  const stats = { insolvency: 0 };
+  // forfeited_shannons is monotonic: it only advances on a COMMITTED forfeit.
+  // There is deliberately no dust counter — dust eligibility is re-evaluated
+  // every tick, so counting selections would climb while nothing was paid.
+  const stats = { insolvency: 0, forfeited: 0, forfeited_shannons: 0n };
 
   if (minimum < 0n) throw new Error('minimumPayoutShannons must be non-negative');
   if (!Number.isInteger(maxItemsPerBatch) || maxItemsPerBatch < 1) {
     throw new Error('maxItemsPerBatch must be a positive integer');
+  }
+  if (!Number.isFinite(dustInactiveDays) || dustInactiveDays < 0) {
+    throw new Error('dustInactiveDays must be a non-negative number of days');
+  }
+  if (!Number.isFinite(forfeitAfterDays) || forfeitAfterDays < 0) {
+    throw new Error('forfeitAfterDays must be a non-negative number of days (0 disables)');
   }
   if (!limits || typeof limits.maxBatchShannons !== 'string' ||
       typeof limits.maxDailyShannons !== 'string' ||
@@ -60,25 +79,156 @@ function createPayoutWorker({
     return { ok: false, received, owed };
   }
 
-  /** Miners with confirmed balance ≥ floor, by miner id (net of reservations). */
-  async function eligibleMiners() {
+  /**
+   * Every miner's confirmed balance with its payout address and the age of its
+   * most recent CREDIT. A negative entry (a payout reservation) is not a
+   * credit: being paid must not look like still earning, or the dust clock
+   * would never expire for anyone the pool has ever paid.
+   */
+  async function balancesWithCreditAge() {
     const res = await db.query(
-      `SELECT miner_id, sum(amount_shannons)::text AS balance
-       FROM ledger_entries
-       WHERE account_type = $1
+      `SELECT l.miner_id::text AS miner_id,
+              m.payout_address,
+              sum(l.amount_shannons)::text AS balance,
+              EXTRACT(EPOCH FROM (now() - max(l.created_at)
+                FILTER (WHERE l.amount_shannons > 0))) / 86400 AS credit_age_days
+       FROM ledger_entries l
+       JOIN miners m ON m.id = l.miner_id
+       WHERE l.account_type = $1
          AND NOT EXISTS (
            SELECT 1
              FROM payout_items i
              JOIN payout_batches b ON b.id = i.batch_id
-            WHERE i.miner_id = ledger_entries.miner_id
+            WHERE i.miner_id = l.miner_id
               AND b.state = 'HELD'
          )
-       GROUP BY miner_id
-       HAVING sum(amount_shannons) >= $2
-       ORDER BY miner_id`,
-      [ACCOUNTS.CONFIRMED, minimum.toString()],
+       GROUP BY l.miner_id, m.payout_address
+       ORDER BY l.miner_id`,
+      [ACCOUNTS.CONFIRMED],
     );
     return res.rows;
+  }
+
+  /**
+   * Which regime a row falls into, or null if its address cannot be decoded.
+   *
+   * A balance at or above the minimum is payable without decoding anything:
+   * that is the pre-dust path and it stays byte-for-byte the same, so a
+   * miner who has always been paid cannot start being skipped because of a
+   * change made for dust. Only a sub-minimum balance needs its lock measured.
+   *
+   * A malformed payout address must not throw — one bad row would stop
+   * payouts for every other miner in the pool. `parseUsername` validates the
+   * address at registration, so this is a guard against corrupt rows and
+   * hand-edited data, not an expected path.
+   */
+  function classifyRow(row) {
+    const balance = BigInt(row.balance);
+    if (balance >= minimum) return 'payable';
+    let floor;
+    try {
+      floor = payableFloorForAddress(row.payout_address);
+    } catch (error) {
+      logger.log('PAYOUT',
+        `miner ${String(row.miner_id).slice(0, 8)} has an undecodable payout address ` +
+        `(${error.message}); skipped`);
+      return null;
+    }
+    return classifyBalance({ balance, floor, minimumPayout: minimum });
+  }
+
+  /**
+   * Payout candidates: normal balances at or above the minimum, plus dust
+   * balances whose miner has stopped earning.
+   *
+   * Returns rows carrying `dust` so createBatch's per-candidate re-check can
+   * tell an intentional sub-minimum payout from a balance that shrank between
+   * selection and construction.
+   */
+  async function eligibleMiners() {
+    const candidates = [];
+    for (const row of await balancesWithCreditAge()) {
+      const regime = classifyRow(row);
+      if (regime === 'payable') {
+        candidates.push({ miner_id: row.miner_id, balance: row.balance, dust: false });
+        continue;
+      }
+      if (regime !== 'dust') continue;
+      const ageDays = row.credit_age_days === null ? Infinity : Number(row.credit_age_days);
+      if (ageDays < dustInactiveDays) continue;
+      logger.log('PAYOUT',
+        `miner ${String(row.miner_id).slice(0, 8)} dust-swept: ${row.balance} shannons, ` +
+        `no credit for ${ageDays.toFixed(1)} days`);
+      candidates.push({ miner_id: row.miner_id, balance: row.balance, dust: true });
+    }
+    return candidates;
+  }
+
+  /**
+   * Move balances that no transaction could ever deliver into the pool fee
+   * account, after `forfeitAfterDays` of dormancy. Disabled when that is 0.
+   *
+   * Runs under the caller's advisory lock (single writer), and each move is
+   * keyed on the ledger row it observed, so a re-run over unchanged state is a
+   * no-op and a re-run after a new credit is a different key — by which point
+   * the dormancy clock has reset anyway and the row no longer qualifies.
+   */
+  async function forfeitUnpayable() {
+    if (forfeitAfterDays === 0) return [];
+    const forfeited = [];
+    for (const row of await balancesWithCreditAge()) {
+      if (classifyRow(row) !== 'unpayable') continue;
+      if (BigInt(row.balance) <= 0n) continue;
+      const ageDays = row.credit_age_days === null ? Infinity : Number(row.credit_age_days);
+      if (ageDays < forfeitAfterDays) continue;
+
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const balance = await balanceFor(client, row.miner_id, [ACCOUNTS.CONFIRMED]);
+        if (balance <= 0n) { await client.query('ROLLBACK'); continue; }
+        // A deterministic fingerprint of the exact confirmed-entry set observed.
+        // Unchanged ledger → same key → the second post is a no-op; a new
+        // credit → different key, but by then the dormancy clock has reset and
+        // the row no longer qualifies. (max() has no uuid overload; cast.)
+        const witness = (await client.query(
+          `SELECT max(id::text) AS id FROM ledger_entries
+            WHERE miner_id = $1 AND account_type = $2`,
+          [row.miner_id, ACCOUNTS.CONFIRMED])).rows[0].id;
+        const key = `forfeit:${row.miner_id}:${witness}`;
+        const posted = await postEntry(client, {
+          accountType: ACCOUNTS.CONFIRMED,
+          minerId: row.miner_id,
+          amountShannons: (-balance).toString(),
+          referenceType: 'forfeit',
+          referenceId: row.miner_id,
+          idempotencyKey: key,
+          metadata: { reason: 'unpayable dormant balance', ageDays, forfeitAfterDays },
+        });
+        if (!posted) { await client.query('ROLLBACK'); continue; }
+        await postEntry(client, {
+          accountType: ACCOUNTS.POOL_FEE,
+          amountShannons: balance.toString(),
+          referenceType: 'forfeit',
+          referenceId: row.miner_id,
+          idempotencyKey: `${key}:fee`,
+          metadata: { minerId: row.miner_id },
+        });
+        await client.query('COMMIT');
+        stats.forfeited++;
+        stats.forfeited_shannons += balance;
+        forfeited.push({ minerId: row.miner_id, amountShannons: balance.toString() });
+        logger.log('PAYOUT',
+          `miner ${String(row.miner_id).slice(0, 8)} forfeited ${balance} shannons to pool_fee ` +
+          `(below its cell floor, dormant ${ageDays.toFixed(1)} days)`);
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
+    return forfeited;
   }
 
   /**
@@ -103,7 +253,12 @@ function createPayoutWorker({
         if (seen.has(minerId)) continue;
         seen.add(minerId);
         const owed = await balanceFor(client, minerId, [ACCOUNTS.CONFIRMED]);
-        if (owed < minimum) continue;
+        // Re-checked against the ledger inside the transaction, because the
+        // balance can shrink between selection and construction. A dust
+        // candidate is deliberately below the minimum, so its floor is the
+        // amount eligibleMiners approved rather than the payout minimum.
+        const required = m.dust ? BigInt(m.balance) : minimum;
+        if (owed < required) continue;
         candidates.push({ minerId, amount: owed, owed });
       }
       if (candidates.length === 0) {
@@ -439,6 +594,7 @@ function createPayoutWorker({
     try {
       const node = rpcOverride || rpcClient;
       if (node) await recoverPendingBatches(node);
+      await forfeitUnpayable();
       const unresolved = await db.query(
         `SELECT 1 FROM payout_batches WHERE state IN ('BUILT', 'BROADCAST') LIMIT 1`);
       if (unresolved.rowCount > 0) {
@@ -470,6 +626,8 @@ function createPayoutWorker({
   return {
     runOnce,
     eligibleMiners,
+    balancesWithCreditAge,
+    forfeitUnpayable,
     createBatch,
     processBatch,
     confirmBatch,

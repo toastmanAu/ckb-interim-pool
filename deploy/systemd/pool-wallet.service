@@ -21,6 +21,13 @@ Environment=POOL_WALLET_FLOAT_SHANNONS=500000000000
 Environment=POOL_WALLET_MAX_BATCH_SHANNONS=200000000000
 Environment=POOL_WALLET_MAX_DAILY_SHANNONS=1000000000000
 Environment=POOL_MIN_PAYOUT_SHANNONS=100000000000
+# Dust sweep: pay a stranded sub-minimum balance once its miner has taken no
+# credit for this many days (a changed payout address strands the old one).
+Environment=POOL_DUST_INACTIVE_DAYS=3
+# Forfeit balances too small to form a cell at all, after this many days of
+# dormancy. 0 = never. Moving miner funds to the pool is custodial
+# confiscation: put it in the pool terms before raising this.
+Environment=POOL_DUST_FORFEIT_DAYS=0
 Environment=POOL_WALLET_TICK_MS=300000
 Environment=POOL_WALLET_CONFIRMATIONS=20
 Environment=POOL_WALLET_METRICS_PORT=9102
